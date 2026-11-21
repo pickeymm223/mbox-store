@@ -10,6 +10,7 @@ data class StoreApp(
     val name: String,
     val developer: String,
     val category: String,
+    val genre: String,
     val versionName: String,
     val versionCode: Long,
     val sizeBytes: Long,
@@ -57,6 +58,8 @@ object Catalog {
                     name = o.optString("name", pkg),
                     developer = o.optString("developer"),
                     category = o.optString("category"),
+                    genre = o.optString("genre")
+                        .ifEmpty { o.optString("category") },
                     versionName = o.optString("versionName"),
                     versionCode = o.optLong("versionCode", 0L),
                     sizeBytes = o.optLong("sizeBytes", 0L),
