@@ -73,6 +73,15 @@
             android:max="100"
             android:visibility="gone" />
 
+        <Button
+            android:id="@+id/cancel"
+            style="@style/Widget.MBOXStore.SecondaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Cancel download"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/status"
             android:layout_width="wrap_content"
