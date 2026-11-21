@@ -1,6 +1,2 @@
-build/
-.gradle/
-local.properties
-*.iml
-.idea/
-server/admin_secret.txt
+server/release-keystore.p12
+server/keystore_password.txt
