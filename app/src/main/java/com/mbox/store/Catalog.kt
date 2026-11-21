@@ -17,7 +17,8 @@ data class StoreApp(
     val apkUrl: String,
     val certSha256: String,
     val description: String,
-    val changelog: String
+    val changelog: String,
+    val screenshots: List<String> = emptyList()
 )
 
 object Catalog {
@@ -63,9 +64,20 @@ object Catalog {
                     apkUrl = o.optString("apk"),
                     certSha256 = o.optString("certSha256"),
                     description = o.optString("description"),
-                    changelog = o.optString("changelog")
+                    changelog = o.optString("changelog"),
+                    screenshots = parseShots(o.optJSONArray("screenshots"))
                 )
             )
+        }
+        return out
+    }
+
+    private fun parseShots(arr: org.json.JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<String>(arr.length())
+        for (i in 0 until arr.length()) {
+            val s = arr.optString(i).trim()
+            if (s.isNotEmpty()) out.add(s)
         }
         return out
     }
