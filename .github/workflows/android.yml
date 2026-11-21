@@ -1,11 +1,17 @@
-# Cloud Build for MBOX Store — builds a debug APK on every push to main
-# and publishes it as a GitHub Release asset (mbox-store-v<versionCode>.apk).
+# Cloud Build for MBOX Store — builds a signed release APK and publishes it
+# as a GitHub Release asset (mbox-store-v<versionCode>.apk).
+# Runs ONLY when started manually (Actions tab -> Run workflow) so uploading
+# many source files does not trigger a build for every single file.
+# Signing uses the fixed release keystore from GitHub Secrets so updates
+# install over previous versions.
 name: Android CI
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: android-ci
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -27,27 +33,38 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "y" | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" "platform-tools" || echo "sdkmanager install skipped (already present)"
 
-      - name: Build debug APK
+      - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          ls -la "$RUNNER_TEMP/release.p12"
+
+      - name: Build signed release APK
         uses: gradle/gradle-build-action@v3
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.p12
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: mboxstore
+          KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         with:
           gradle-version: "8.7"
-          arguments: assembleDebug
+          arguments: assembleRelease
 
       - name: Publish APK to GitHub Release
-        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VC=$(grep -m1 'versionCode' app/build.gradle | grep -o '[0-9]*')
           TAG="build-v${VC}"
-          cp app/build/outputs/apk/debug/app-debug.apk "mbox-store-v${VC}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "mbox-store-v${VC}.apk"
           gh release create "$TAG" "mbox-store-v${VC}.apk" \
             --title "MBOX Store build v${VC}" \
-            --notes "Automated CI build of MBOX Store (debug-signed for testing)." \
+            --notes "Automated CI build of MBOX Store (release-signed)." \
           || gh release upload "$TAG" "mbox-store-v${VC}.apk" --clobber
 
-      - name: Upload debug APK artifact
+      - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: app-release
+          path: app/build/outputs/apk/release/app-release.apk
