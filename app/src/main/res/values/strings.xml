@@ -9,4 +9,21 @@
     <string name="whats_new">What\'s new</string>
     <string name="signature_title">Signing certificate (SHA-256)</string>
     <string name="signature_note">Every download is checked against this signature before install.</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_categories">Categories</string>
+    <string name="nav_updates">Updates</string>
+    <string name="nav_profile">Profile</string>
+    <string name="clear_filter">Clear</string>
+    <string name="my_apps">My apps</string>
+    <string name="download_history">Download history</string>
+    <string name="up_to_date">All your apps are up to date</string>
+    <string name="about_store_title">About MBOX Store</string>
+    <string name="about_store">MBOX Store is an independent Android app store by MBOX. Every download is signature-checked against the developer\'s certificate before install.</string>
+    <string name="no_history">Nothing downloaded yet</string>
+    <string name="no_my_apps">No apps from MBOX Store installed yet</string>
+    <string name="screenshots_title">Screenshots</string>
+    <string name="update_banner">MBOX Store update available — tap to update</string>
+    <string name="update_btn">Update</string>
+    <string name="self_latest">MBOX Store is up to date</string>
+    <string name="self_update_available">A new version of MBOX Store is available</string>
 </resources>
