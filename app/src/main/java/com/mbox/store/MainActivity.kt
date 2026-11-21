@@ -7,28 +7,51 @@ import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
-import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mbox.store.databinding.ActivityMainBinding
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private val adapter = AppAdapter()
+    private lateinit var homeAdapter: AppAdapter
+    private lateinit var updatesAdapter: AppAdapter
+    private lateinit var catAdapter: CategoryAdapter
     private var allApps: List<StoreApp> = emptyList()
+    private var categoryFilter: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        val openDetail = { app: StoreApp ->
+            startActivity(
+                Intent(this, DetailActivity::class.java)
+                    .putExtra(DetailActivity.EXTRA_PKG, app.pkg)
+            )
+        }
+        homeAdapter = AppAdapter(openDetail)
+        updatesAdapter = AppAdapter(openDetail)
+        catAdapter = CategoryAdapter { category ->
+            categoryFilter = category
+            binding.bottomNav.selectedItemId = R.id.nav_home
+            showSection(R.id.nav_home)
+            applyFilter()
+        }
+
         binding.list.layoutManager = LinearLayoutManager(this)
-        binding.list.adapter = adapter
+        binding.list.adapter = homeAdapter
+        binding.updatesList.layoutManager = LinearLayoutManager(this)
+        binding.updatesList.adapter = updatesAdapter
+        binding.catList.layoutManager = LinearLayoutManager(this)
+        binding.catList.adapter = catAdapter
 
         binding.search.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable?) = applyFilter()
@@ -36,10 +59,26 @@ class MainActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
         binding.retry.setOnClickListener { load() }
+        binding.filterClear.setOnClickListener {
+            categoryFilter = null
+            applyFilter()
+        }
+        val openSelf = {
+            startActivity(
+                Intent(this, DetailActivity::class.java)
+                    .putExtra(DetailActivity.EXTRA_PKG, packageName)
+            )
+        }
+        binding.updateBanner.setOnClickListener { openSelf() }
+        binding.selfUpdateBtn.setOnClickListener { openSelf() }
+        binding.bottomNav.setOnItemSelectedListener { item ->
+            showSection(item.itemId)
+            true
+        }
 
         if (Catalog.apps.isNotEmpty()) {
             allApps = Catalog.apps
-            applyFilter()
+            onCatalogReady()
         } else {
             load()
         }
@@ -48,7 +87,24 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         // Install states may have changed while we were away.
-        if (allApps.isNotEmpty()) adapter.notifyDataSetChanged()
+        if (allApps.isNotEmpty()) {
+            homeAdapter.refresh()
+            refreshUpdates()
+            refreshProfile()
+            refreshSelfUpdate()
+        }
+    }
+
+    private fun showSection(id: Int) {
+        binding.sectionHome.visibility = if (id == R.id.nav_home) View.VISIBLE else View.GONE
+        binding.sectionCategories.visibility =
+            if (id == R.id.nav_categories) View.VISIBLE else View.GONE
+        binding.sectionUpdates.visibility =
+            if (id == R.id.nav_updates) View.VISIBLE else View.GONE
+        binding.sectionProfile.visibility =
+            if (id == R.id.nav_profile) View.VISIBLE else View.GONE
+        if (id == R.id.nav_updates) refreshUpdates()
+        if (id == R.id.nav_profile) refreshProfile()
     }
 
     private fun load() {
@@ -60,7 +116,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     binding.progress.visibility = View.GONE
                     allApps = apps
-                    applyFilter()
+                    onCatalogReady()
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -73,61 +129,142 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun onCatalogReady() {
+        applyFilter()
+        val cats = allApps.map { it.category }.filter { it.isNotEmpty() }
+            .groupingBy { it }.eachCount()
+            .toList().sortedBy { it.first }
+        catAdapter.submit(cats)
+        refreshUpdates()
+        refreshProfile()
+    }
+
+    /** The store's own catalog entry when a newer version exists. */
+    private fun ownUpdate(): StoreApp? {
+        val entry = Catalog.find(packageName) ?: return null
+        val installed = Installer.installedVersion(this, packageName)
+        return if (entry.versionCode > installed) entry else null
+    }
+
+    private fun refreshSelfUpdate() {
+        val upd = ownUpdate()
+        binding.updateBanner.visibility = if (upd != null) View.VISIBLE else View.GONE
+        if (upd != null) {
+            binding.selfUpdateText.text =
+                "${getString(R.string.self_update_available)} (v${upd.versionName})"
+            binding.selfUpdateBtn.visibility = View.VISIBLE
+        } else {
+            binding.selfUpdateText.text = getString(R.string.self_latest)
+            binding.selfUpdateBtn.visibility = View.GONE
+        }
+    }
+
     private fun applyFilter() {
         val q = binding.search.text?.toString()?.trim()?.lowercase().orEmpty()
-        val filtered = if (q.isEmpty()) allApps else allApps.filter {
-            it.name.lowercase().contains(q) ||
-                it.developer.lowercase().contains(q) ||
-                it.category.lowercase().contains(q)
+        val cat = categoryFilter
+        binding.filterBar.visibility = if (cat != null) View.VISIBLE else View.GONE
+        if (cat != null) binding.filterLabel.text = "Category: $cat"
+        val filtered = allApps.filter { app ->
+            (cat == null || app.category == cat) &&
+                (q.isEmpty() ||
+                    app.name.lowercase().contains(q) ||
+                    app.developer.lowercase().contains(q) ||
+                    app.category.lowercase().contains(q))
         }
-        adapter.submit(filtered)
+        homeAdapter.submit(filtered)
         binding.emptyText.visibility =
             if (filtered.isEmpty() && allApps.isNotEmpty()) View.VISIBLE else View.GONE
     }
 
-    inner class AppAdapter : RecyclerView.Adapter<AppAdapter.Holder>() {
-        private var items: List<StoreApp> = emptyList()
+    private fun refreshUpdates() {
+        if (allApps.isEmpty()) return
+        val updates = allApps.filter {
+            Installer.stateFor(this, it) == Installer.State.UPDATE
+        }
+        updatesAdapter.submit(updates)
+        binding.updatesSummary.text = when {
+            updates.isEmpty() -> ""
+            updates.size == 1 -> "1 update available"
+            else -> "${updates.size} updates available"
+        }
+        binding.updatesEmpty.visibility = if (updates.isEmpty()) View.VISIBLE else View.GONE
+    }
 
-        fun submit(list: List<StoreApp>) {
+    private fun refreshProfile() {
+        binding.profileVersion.text = "Version ${BuildConfig.VERSION_NAME}"
+        refreshSelfUpdate()
+
+        val mine = allApps.filter { Installer.installedVersion(this, it.pkg) >= 0L }
+        binding.myAppsBox.removeAllViews()
+        if (mine.isEmpty()) {
+            binding.myAppsBox.addView(dimText(getString(R.string.no_my_apps)))
+        } else {
+            for (app in mine) {
+                val state = when (Installer.stateFor(this, app)) {
+                    Installer.State.UPDATE -> "Update available"
+                    else -> "Installed"
+                }
+                binding.myAppsBox.addView(rowText("${app.name} — $state"))
+            }
+        }
+
+        val history = History.all(this)
+        binding.historyBox.removeAllViews()
+        if (history.isEmpty()) {
+            binding.historyBox.addView(dimText(getString(R.string.no_history)))
+        } else {
+            val fmt = SimpleDateFormat("d MMM yyyy, h:mm a", Locale.ENGLISH)
+            for (e in history) {
+                binding.historyBox.addView(
+                    rowText("${e.name} • v${e.versionName} • ${fmt.format(Date(e.atMillis))}")
+                )
+            }
+        }
+    }
+
+    private fun rowText(text: String): TextView {
+        val tv = TextView(this)
+        tv.text = text
+        tv.textSize = 14f
+        tv.setTextColor(getColor(R.color.text_primary))
+        tv.setPadding(0, 6, 0, 6)
+        return tv
+    }
+
+    private fun dimText(text: String): TextView {
+        val tv = rowText(text)
+        tv.setTextColor(getColor(R.color.text_secondary))
+        return tv
+    }
+
+    inner class CategoryAdapter(
+        private val onPick: (String) -> Unit
+    ) : RecyclerView.Adapter<CategoryAdapter.Holder>() {
+        private var items: List<Pair<String, Int>> = emptyList()
+
+        fun submit(list: List<Pair<String, Int>>) {
             items = list
             notifyDataSetChanged()
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
             val v = LayoutInflater.from(parent.context)
-                .inflate(R.layout.item_app, parent, false)
+                .inflate(R.layout.item_category, parent, false)
             return Holder(v)
         }
 
         override fun getItemCount() = items.size
 
         override fun onBindViewHolder(holder: Holder, position: Int) {
-            val app = items[position]
-            holder.name.text = app.name
-            val size = Installer.formatSize(app.sizeBytes)
-            holder.meta.text = listOf(app.developer, size)
-                .filter { it.isNotEmpty() }.joinToString(" • ")
-            IconLoader.load(app.iconUrl, holder.icon)
-            holder.action.text = when (Installer.stateFor(this@MainActivity, app)) {
-                Installer.State.GET -> "GET"
-                Installer.State.UPDATE -> "UPDATE"
-                Installer.State.OPEN -> "OPEN"
-            }
-            val open = {
-                startActivity(
-                    Intent(this@MainActivity, DetailActivity::class.java)
-                        .putExtra(DetailActivity.EXTRA_PKG, app.pkg)
-                )
-            }
-            holder.itemView.setOnClickListener { open() }
-            holder.action.setOnClickListener { open() }
+            val (name, count) = items[position]
+            holder.name.text = name
+            holder.count.text = if (count == 1) "1 app" else "$count apps"
+            holder.itemView.setOnClickListener { onPick(name) }
         }
 
         inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
-            val icon: ImageView = v.findViewById(R.id.icon)
-            val name: TextView = v.findViewById(R.id.name)
-            val meta: TextView = v.findViewById(R.id.meta)
-            val action: Button = v.findViewById(R.id.action)
+            val name: TextView = v.findViewById(R.id.catName)
+            val count: TextView = v.findViewById(R.id.catCount)
         }
     }
 }
