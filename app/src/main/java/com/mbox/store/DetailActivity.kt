@@ -41,6 +41,20 @@ class DetailActivity : AppCompatActivity() {
             a.category
         ).filter { it.isNotEmpty() }.joinToString(" • ")
         binding.description.text = a.description
+        if (a.screenshots.isNotEmpty()) {
+            binding.shotsBox.visibility = View.VISIBLE
+            for (url in a.screenshots) {
+                val iv = android.widget.ImageView(this)
+                val w = (150 * resources.displayMetrics.density).toInt()
+                val h = (300 * resources.displayMetrics.density).toInt()
+                val lp = android.widget.LinearLayout.LayoutParams(w, h)
+                lp.marginEnd = (10 * resources.displayMetrics.density).toInt()
+                iv.layoutParams = lp
+                iv.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                binding.shotsRow.addView(iv)
+                IconLoader.load(url, iv)
+            }
+        }
         binding.changelogBox.visibility =
             if (a.changelog.isNotEmpty()) View.VISIBLE else View.GONE
         binding.changelog.text = a.changelog
@@ -133,6 +147,7 @@ class DetailActivity : AppCompatActivity() {
                         setStatus("Signature check failed. For your safety, the install was cancelled.")
                     }
                     else -> {
+                        History.add(this, a)
                         setStatus("Opening installer…")
                         Installer.install(this, dest)
                     }
