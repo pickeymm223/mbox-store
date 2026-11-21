@@ -49,7 +49,7 @@ class DetailActivity : AppCompatActivity() {
         binding.meta.text = listOf(
             "Version ${a.versionName}",
             size,
-            a.category
+            a.genre
         ).filter { it.isNotEmpty() }.joinToString(" • ")
         binding.description.text = a.description
         if (a.screenshots.isNotEmpty()) {
