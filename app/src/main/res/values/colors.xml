@@ -7,4 +7,7 @@
     <color name="text_primary">#F2F5F7</color>
     <color name="text_secondary">#9AA7B1</color>
     <color name="ic_bg">#0B3B39</color>
+    <color name="surface2">#1E262E</color>
+    <color name="pill_bg">#242D36</color>
+    <color name="pill_text">#C7D0D8</color>
 </resources>
