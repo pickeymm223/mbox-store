@@ -3,12 +3,14 @@ package com.mbox.store
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 
-/** App row used by the Home and Updates lists. */
+/**
+ * Play Store-style app row: icon, name, genre, size pill + version.
+ * The whole row opens the app page — no buttons on the row itself.
+ */
 class AppAdapter(
     private val onOpen: (StoreApp) -> Unit
 ) : RecyclerView.Adapter<AppAdapter.Holder>() {
@@ -33,23 +35,18 @@ class AppAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val app = items[position]
         holder.name.text = app.name
-        val size = Installer.formatSize(app.sizeBytes)
-        holder.meta.text = listOf(app.developer, size)
-            .filter { it.isNotEmpty() }.joinToString(" • ")
+        holder.genre.text = app.genre
+        holder.sizePill.text = Installer.formatSize(app.sizeBytes)
+        holder.version.text = "v${app.versionName}"
         IconLoader.load(app.iconUrl, holder.icon)
-        holder.action.text = when (Installer.stateFor(holder.itemView.context, app)) {
-            Installer.State.GET -> "GET"
-            Installer.State.UPDATE -> "UPDATE"
-            Installer.State.OPEN -> "OPEN"
-        }
         holder.itemView.setOnClickListener { onOpen(app) }
-        holder.action.setOnClickListener { onOpen(app) }
     }
 
     class Holder(v: View) : RecyclerView.ViewHolder(v) {
         val icon: ImageView = v.findViewById(R.id.icon)
         val name: TextView = v.findViewById(R.id.name)
-        val meta: TextView = v.findViewById(R.id.meta)
-        val action: Button = v.findViewById(R.id.action)
+        val genre: TextView = v.findViewById(R.id.genre)
+        val sizePill: TextView = v.findViewById(R.id.sizePill)
+        val version: TextView = v.findViewById(R.id.version)
     }
 }
