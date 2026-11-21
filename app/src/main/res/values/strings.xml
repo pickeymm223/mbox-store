@@ -26,4 +26,10 @@
     <string name="update_btn">Update</string>
     <string name="self_latest">MBOX Store is up to date</string>
     <string name="self_update_available">A new version of MBOX Store is available</string>
+    <string name="sec_essential">Essential in Myanmar</string>
+    <string name="sec_popular">Popular apps</string>
+    <string name="sec_all">All apps</string>
+    <string name="browse_categories">Browse categories</string>
+    <string name="featured_app">FEATURED APP</string>
+    <string name="store_update_kicker">MBOX STORE UPDATE</string>
 </resources>
