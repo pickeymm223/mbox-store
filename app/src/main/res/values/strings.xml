@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MBOX Store</string>
+    <string name="tagline">Independent apps, straight from developers</string>
+    <string name="search_hint">Search apps</string>
+    <string name="no_results">No apps found</string>
+    <string name="retry">Retry</string>
+    <string name="about_title">About this app</string>
+    <string name="whats_new">What\'s new</string>
+    <string name="signature_title">Signing certificate (SHA-256)</string>
+    <string name="signature_note">Every download is checked against this signature before install.</string>
+</resources>
