@@ -1,12 +1,13 @@
 package com.mbox.store
 
+import android.app.DownloadManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import com.mbox.store.databinding.ActivityDetailBinding
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlin.concurrent.thread
 
 class DetailActivity : AppCompatActivity() {
@@ -17,7 +18,17 @@ class DetailActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityDetailBinding
     private var app: StoreApp? = null
-    private var busy = false
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var polling = false
+    private var verifying = false
+    private val pollTick = object : Runnable {
+        override fun run() {
+            if (!polling) return
+            pollDownload(autoInstall = true)
+            handler.postDelayed(this, 1000)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,16 +73,25 @@ class DetailActivity : AppCompatActivity() {
             if (a.certSha256.isNotEmpty()) View.VISIBLE else View.GONE
         binding.cert.text = a.certSha256
         binding.action.setOnClickListener { onAction() }
+        binding.cancel.setOnClickListener { onCancel() }
         refreshState()
     }
 
     override fun onResume() {
         super.onResume()
-        if (!busy) refreshState()
+        if (!verifying) syncDownloadUi()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopPolling()
     }
 
     private fun refreshState() {
         val a = app ?: return
+        binding.action.isEnabled = true
+        binding.cancel.visibility = View.GONE
+        binding.progress.visibility = View.GONE
         binding.action.text = when (Installer.stateFor(this, a)) {
             Installer.State.GET -> "Install"
             Installer.State.UPDATE -> "Update"
@@ -83,17 +103,28 @@ class DetailActivity : AppCompatActivity() {
         val a = app ?: return
         when (Installer.stateFor(this, a)) {
             Installer.State.OPEN -> Installer.openApp(this, a.pkg)
-            else -> downloadAndInstall(a)
+            else -> {
+                // A finished download waiting for its install tap?
+                val id = Downloader.trackedId(this, a.pkg)
+                val p = if (id != -1L) Downloader.query(this, id) else null
+                if (p != null && p.status == DownloadManager.STATUS_SUCCESSFUL) {
+                    verifyAndInstall(a, Downloader.destFile(this, a))
+                } else {
+                    startDownload(a)
+                }
+            }
         }
     }
 
-    private fun setStatus(text: String) {
-        binding.status.visibility = View.VISIBLE
-        binding.status.text = text
+    private fun onCancel() {
+        val a = app ?: return
+        Downloader.cancel(this, a)
+        stopPolling()
+        setStatus("Download cancelled.")
+        refreshState()
     }
 
-    private fun downloadAndInstall(a: StoreApp) {
-        if (busy) return
+    private fun startDownload(a: StoreApp) {
         if (!Installer.canInstallPackages(this)) {
             setStatus(
                 "One-time setup: allow MBOX Store to install apps, " +
@@ -102,31 +133,107 @@ class DetailActivity : AppCompatActivity() {
             Installer.openUnknownSourcesSettings(this)
             return
         }
-        busy = true
-        binding.action.isEnabled = false
-        binding.progress.visibility = View.VISIBLE
-        binding.progress.progress = 0
-        setStatus("Downloading ${a.name}…")
+        Downloader.enqueue(this, a)
+        showDownloading(0, a.sizeBytes)
+        startPolling()
+    }
 
-        val dir = File(getExternalFilesDir(null), "apks").apply { mkdirs() }
-        val dest = File(dir, "${a.pkg}-${a.versionCode}.apk")
+    /** Re-attach the UI to a download started earlier (running or finished). */
+    private fun syncDownloadUi() {
+        val a = app ?: return
+        val id = Downloader.trackedId(this, a.pkg)
+        if (id == -1L) {
+            refreshState()
+            return
+        }
+        val p = Downloader.query(this, id)
+        when {
+            p == null -> {
+                Downloader.forget(this, a.pkg)
+                refreshState()
+            }
+            p.status == DownloadManager.STATUS_SUCCESSFUL -> {
+                if (Installer.installedVersion(this, a.pkg) >= a.versionCode) {
+                    Downloader.forget(this, a.pkg)
+                    refreshState()
+                } else {
+                    refreshState()
+                    setStatus("Download complete — tap the button to install.")
+                }
+            }
+            p.status == DownloadManager.STATUS_FAILED -> {
+                Downloader.forget(this, a.pkg)
+                Downloader.destFile(this, a).delete()
+                refreshState()
+                setStatus("Download failed. Check your connection and try again.")
+            }
+            else -> {
+                showDownloading(p.done, if (p.total > 0) p.total else a.sizeBytes)
+                startPolling()
+            }
+        }
+    }
+
+    private fun pollDownload(autoInstall: Boolean) {
+        val a = app ?: return
+        val id = Downloader.trackedId(this, a.pkg)
+        if (id == -1L) {
+            stopPolling()
+            return
+        }
+        val p = Downloader.query(this, id) ?: return
+        when (p.status) {
+            DownloadManager.STATUS_SUCCESSFUL -> {
+                stopPolling()
+                if (autoInstall) {
+                    verifyAndInstall(a, Downloader.destFile(this, a))
+                }
+            }
+            DownloadManager.STATUS_FAILED -> {
+                stopPolling()
+                Downloader.forget(this, a.pkg)
+                Downloader.destFile(this, a).delete()
+                refreshState()
+                setStatus("Download failed. Check your connection and try again.")
+            }
+            else -> showDownloading(p.done, if (p.total > 0) p.total else a.sizeBytes)
+        }
+    }
+
+    private fun showDownloading(done: Long, total: Long) {
+        val a = app ?: return
+        binding.action.isEnabled = false
+        binding.action.text = "Downloading…"
+        binding.cancel.visibility = View.VISIBLE
+        binding.progress.visibility = View.VISIBLE
+        binding.progress.progress =
+            if (total > 0) (done * 100 / total).toInt() else 0
+        val pct = if (total > 0) (done * 100 / total).toInt() else 0
+        setStatus(
+            "Downloading ${a.name}… $pct% • " +
+                "${Installer.formatSize(done)} of ${Installer.formatSize(total)}"
+        )
+    }
+
+    private fun startPolling() {
+        if (polling) return
+        polling = true
+        handler.postDelayed(pollTick, 500)
+    }
+
+    private fun stopPolling() {
+        polling = false
+        handler.removeCallbacks(pollTick)
+    }
+
+    private fun verifyAndInstall(a: StoreApp, dest: File) {
+        if (verifying) return
+        verifying = true
+        binding.action.isEnabled = false
+        binding.cancel.visibility = View.GONE
+        binding.progress.visibility = View.GONE
+        setStatus("Checking the downloaded file…")
         thread {
-            val ok = try {
-                download(a.apkUrl, dest) { pct ->
-                    runOnUiThread { binding.progress.progress = pct }
-                }
-            } catch (e: Exception) {
-                false
-            }
-            if (!ok) {
-                runOnUiThread {
-                    busy = false
-                    binding.action.isEnabled = true
-                    binding.progress.visibility = View.GONE
-                    setStatus("Download failed. Check your connection and try again.")
-                }
-                return@thread
-            }
             // Verify the file really is the app we promised, signed with the
             // catalog certificate, before handing it to the installer.
             val archivePkg = Installer.apkPackageName(this, dest)
@@ -134,20 +241,22 @@ class DetailActivity : AppCompatActivity() {
             val certOk = a.certSha256.isEmpty() ||
                 (cert != null && normalize(a.certSha256) == normalize(cert))
             runOnUiThread {
-                busy = false
-                binding.action.isEnabled = true
-                binding.progress.visibility = View.GONE
+                verifying = false
+                Downloader.forget(this, a.pkg)
                 when {
                     archivePkg != a.pkg -> {
                         dest.delete()
+                        refreshState()
                         setStatus("Downloaded file does not match this app. Cancelled.")
                     }
                     !certOk -> {
                         dest.delete()
+                        refreshState()
                         setStatus("Signature check failed. For your safety, the install was cancelled.")
                     }
                     else -> {
                         History.add(this, a)
+                        refreshState()
                         setStatus("Opening installer…")
                         Installer.install(this, dest)
                     }
@@ -156,28 +265,11 @@ class DetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun setStatus(text: String) {
+        binding.status.visibility = View.VISIBLE
+        binding.status.text = text
+    }
+
     private fun normalize(s: String): String =
         s.replace(":", "").replace(" ", "").uppercase()
-
-    private fun download(url: String, dest: File, onProgress: (Int) -> Unit): Boolean {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 15000
-        conn.readTimeout = 30000
-        conn.setRequestProperty("User-Agent", "MBOXStore-Android")
-        val total = conn.contentLengthLong
-        conn.inputStream.use { input ->
-            dest.outputStream().use { output ->
-                val buf = ByteArray(16 * 1024)
-                var done = 0L
-                while (true) {
-                    val n = input.read(buf)
-                    if (n < 0) break
-                    output.write(buf, 0, n)
-                    done += n
-                    if (total > 0) onProgress((done * 100 / total).toInt())
-                }
-            }
-        }
-        return dest.exists() && dest.length() > 0
-    }
 }
