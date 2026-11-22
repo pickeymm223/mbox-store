@@ -43,8 +43,8 @@ If you choose "Connect Telegram", we receive your Telegram user ID, display name
 
 You can disconnect at any time in Profile → Settings → Telegram connection. Disconnecting removes the link between your Telegram account and your Store records.
 
-5. Payments with Telegram Stars
-Paid apps and developer support are paid with Telegram Stars inside Telegram. We never receive or store your bank card or wallet details. We keep a purchase record — Telegram user ID, the app, the amount in Stars, and the date — so we can prove ownership, restore purchases, and account to developers for support payments.
+5. Payments (MBOX Pay)
+Paid apps and developer support are paid with Telegram Stars inside Telegram, or with USDT on the TON network. We never receive or store your bank card details. We keep a purchase record — Telegram user ID, the app, the payment rail, the amount, and the date (for USDT, also the payment memo) — so we can prove ownership, restore purchases, and account to developers for their share. USDT transfers are recorded publicly on the TON blockchain by the network itself; the memo identifies your order, not your name.
 
 6. Sharing
 We do not sell personal information. Information is shared only with the service providers needed to operate the Store (currently Cloudflare, for hosting and file delivery), or when required by law.
@@ -68,9 +68,9 @@ Last updated: 22 November 2026
 
 • Every listed app is signature-verified before install. Verification confirms the file came from the recorded developer; it is not a guarantee that an app is free of defects.
 
-• Free apps can be downloaded without an account. Paid apps and developer support are paid with Telegram Stars through Telegram; a completed Stars payment is recorded against your Telegram account so your purchases can be restored.
+• Free apps can be downloaded without an account. Paid apps and developer support are paid through MBOX Pay with Telegram Stars or USDT (TON); a completed payment is recorded against your Telegram account so your purchases can be restored. USDT payments are confirmed on-chain and are not automatically refundable.
 
-• Support payments are voluntary contributions to a developer, minus the costs of operating the Store, and are accounted to the developer.
+• MBOX Store keeps a 10% fee on paid apps and support. Support payments are voluntary contributions to a developer; 90% is accounted to the developer.
 
 • We may remove an app from the catalog at any time, for example if its official source disappears or its signature changes.
 
@@ -88,13 +88,13 @@ The full text of the Apache License 2.0 is available at apache.org/licenses/LICE
 
     const val PURCHASES = """Payments & purchases
 
-Paid apps and developer support are paid with Telegram Stars — inside Telegram, so no card details ever reach MBOX Store.
+Paid apps and developer support are paid through MBOX Pay — Telegram Stars inside Telegram, or USDT on the TON network. No card details ever reach MBOX Store.
 
-Nothing here yet. When paid apps launch, everything you buy will be listed on this page, tied to your Telegram account, and re-downloadable at any time."""
+Your purchases live in Profile → MBOX Pay → Purchases, tied to your Telegram account, and paid apps stay re-downloadable at any time. Every payment is listed under Payment history."""
 
     const val SUPPORT = """Support sent
 
-When you support a developer with Telegram Stars, it is recorded here and accounted to that developer.
+When you support a developer through MBOX Store, 90% of your payment is accounted to that developer; the Store keeps 10% to run the service.
 
-Nothing here yet — you haven't sent any support payments."""
+Your support payments are listed in Profile → MBOX Pay → Purchases."""
 }
