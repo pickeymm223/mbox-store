@@ -45,6 +45,18 @@
             android:exported="false" />
 
         <activity
+            android:name=".PurchasesActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".PayHistoryActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".UsdtPayActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".SettingsActivity"
             android:exported="false" />
 
