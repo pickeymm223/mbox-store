@@ -185,56 +185,6 @@ class MainActivity : AppCompatActivity() {
         if (v == v.toLong().toDouble()) v.toLong().toString()
         else String.format(java.util.Locale.US, "%.2f", v)
 
-    /** Developers set the TON wallet that receives their payouts. */
-    private fun onPayoutWallet(current: String) {
-        if (!Account.isLinked(this)) {
-            startActivity(
-                Intent(this, MainActivity::class.java)
-                    .putExtra(EXTRA_TAB, "profile")
-            )
-            return
-        }
-        val input = android.widget.EditText(this)
-        input.hint = "UQ… or EQ… TON address"
-        input.setText(current)
-        input.setSingleLine(false)
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Payout wallet")
-            .setMessage(
-                "If you sell apps or receive support through MBOX Store, " +
-                    "payouts go to this TON wallet."
-            )
-            .setView(input)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Save") { _, _ ->
-                val addr = input.text.toString().trim()
-                if (addr.isEmpty()) return@setPositiveButton
-                thread {
-                    val ok = try {
-                        Pay.setPayoutAddress(this, addr)
-                    } catch (e: Exception) {
-                        false
-                    }
-                    runOnUiThread {
-                        if (ok) {
-                            PayCache.savePayoutAddress(this, addr)
-                            android.widget.Toast.makeText(
-                                this, "Payout wallet saved",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                            refreshProfile()
-                        } else {
-                            android.widget.Toast.makeText(
-                                this, "That address was not accepted",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                }
-            }
-            .show()
-    }
-
     private fun showSection(id: Int) {
         binding.sectionHome.visibility = if (id == R.id.nav_home) View.VISIBLE else View.GONE
         binding.sectionCategories.visibility =
@@ -448,7 +398,6 @@ class MainActivity : AppCompatActivity() {
         val ownedCount = PayCache.ownedApps(this).size
         val sStars = PayCache.supportStars(this)
         val sUsdt = PayCache.supportUsdt(this)
-        val payout = PayCache.payoutAddress(this)
         val payGroup = Ui.group(
             this,
             Ui.row(
@@ -466,12 +415,6 @@ class MainActivity : AppCompatActivity() {
                 "Payment history",
                 sub = "Stars & USDT payments"
             ) { startActivity(Intent(this, PayHistoryActivity::class.java)) },
-            Ui.row(
-                this, R.drawable.ic_row_shield, "#7FD1AE",
-                "Payout wallet",
-                sub = if (payout.isEmpty()) "Set your TON address · for developers"
-                else "…" + payout.takeLast(6)
-            ) { onPayoutWallet(payout) },
             Ui.row(
                 this, R.drawable.ic_row_star, "#FFC94D",
                 "Support sent",
