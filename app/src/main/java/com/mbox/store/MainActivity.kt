@@ -172,6 +172,67 @@ class MainActivity : AppCompatActivity() {
             refreshProfile()
             refreshBanner()
         }
+        // Keep purchase state fresh in the background.
+        if (Account.isLinked(this)) {
+            thread {
+                PayCache.refresh(this)
+                runOnUiThread { refreshProfile() }
+            }
+        }
+    }
+
+    private fun trimNum(v: Double): String =
+        if (v == v.toLong().toDouble()) v.toLong().toString()
+        else String.format(java.util.Locale.US, "%.2f", v)
+
+    /** Developers set the TON wallet that receives their payouts. */
+    private fun onPayoutWallet(current: String) {
+        if (!Account.isLinked(this)) {
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .putExtra(EXTRA_TAB, "profile")
+            )
+            return
+        }
+        val input = android.widget.EditText(this)
+        input.hint = "UQ… or EQ… TON address"
+        input.setText(current)
+        input.setSingleLine(false)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Payout wallet")
+            .setMessage(
+                "If you sell apps or receive support through MBOX Store, " +
+                    "payouts go to this TON wallet."
+            )
+            .setView(input)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val addr = input.text.toString().trim()
+                if (addr.isEmpty()) return@setPositiveButton
+                thread {
+                    val ok = try {
+                        Pay.setPayoutAddress(this, addr)
+                    } catch (e: Exception) {
+                        false
+                    }
+                    runOnUiThread {
+                        if (ok) {
+                            PayCache.savePayoutAddress(this, addr)
+                            android.widget.Toast.makeText(
+                                this, "Payout wallet saved",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                            refreshProfile()
+                        } else {
+                            android.widget.Toast.makeText(
+                                this, "That address was not accepted",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
+            }
+            .show()
     }
 
     private fun showSection(id: Int) {
@@ -382,6 +443,48 @@ class MainActivity : AppCompatActivity() {
         manageGroup.addView(manage)
         box.addView(manageGroup)
 
+        // ---- MBOX Pay ----
+        box.addView(Ui.sectionLabel(this, "MBOX PAY"))
+        val ownedCount = PayCache.ownedApps(this).size
+        val sStars = PayCache.supportStars(this)
+        val sUsdt = PayCache.supportUsdt(this)
+        val payout = PayCache.payoutAddress(this)
+        val payGroup = Ui.group(
+            this,
+            Ui.row(
+                this, R.drawable.ic_row_card, "#2EC4B6",
+                "Purchases",
+                sub = when {
+                    !linked -> "Connect Telegram to buy apps"
+                    ownedCount == 1 -> "1 app owned"
+                    ownedCount > 1 -> "$ownedCount apps owned"
+                    else -> "Paid apps you own"
+                }
+            ) { startActivity(Intent(this, PurchasesActivity::class.java)) },
+            Ui.row(
+                this, R.drawable.ic_row_folder, "#6EC1E4",
+                "Payment history",
+                sub = "Stars & USDT payments"
+            ) { startActivity(Intent(this, PayHistoryActivity::class.java)) },
+            Ui.row(
+                this, R.drawable.ic_row_shield, "#7FD1AE",
+                "Payout wallet",
+                sub = if (payout.isEmpty()) "Set your TON address · for developers"
+                else "…" + payout.takeLast(6)
+            ) { onPayoutWallet(payout) },
+            Ui.row(
+                this, R.drawable.ic_row_star, "#FFC94D",
+                "Support sent",
+                sub = when {
+                    sStars > 0 && sUsdt > 0 -> "⭐ $sStars · ₮ ${trimNum(sUsdt)}"
+                    sStars > 0 -> "⭐ $sStars sent to developers"
+                    sUsdt > 0 -> "₮ ${trimNum(sUsdt)} sent to developers"
+                    else -> "Support developers you like"
+                }
+            ) { startActivity(Intent(this, PurchasesActivity::class.java)) }
+        )
+        box.addView(payGroup)
+
         val updates = if (allApps.isEmpty()) emptyList() else updatesAvailable()
         val group1 = Ui.group(
             this,
@@ -398,11 +501,6 @@ class MainActivity : AppCompatActivity() {
                 badge = if (updates.isNotEmpty()) updates.size.toString() else null
             ) { openNotifications(updates) },
             Ui.row(
-                this, R.drawable.ic_row_card, "#6EC1E4",
-                "Payments & purchases",
-                sub = "Telegram Stars · purchase history"
-            ) { InfoActivity.open(this, "Payments & purchases", Texts.PURCHASES) },
-            Ui.row(
                 this, R.drawable.ic_row_shield, "#7FD1AE",
                 "App verification",
                 sub = "Every APK signature-checked before install"
@@ -411,12 +509,7 @@ class MainActivity : AppCompatActivity() {
                 this, R.drawable.ic_row_folder, "#B39DDB",
                 "Library",
                 sub = "Purchased & downloaded apps"
-            ) { startActivity(Intent(this, LibraryActivity::class.java)) },
-            Ui.row(
-                this, R.drawable.ic_row_star, "#FFC94D",
-                "Support sent",
-                sub = "Stars you sent to developers"
-            ) { InfoActivity.open(this, "Support sent", Texts.SUPPORT) }
+            ) { startActivity(Intent(this, LibraryActivity::class.java)) }
         )
         val g1Lp = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
