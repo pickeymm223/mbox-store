@@ -581,7 +581,10 @@ class MainActivity : AppCompatActivity() {
         card.addView(rowTop)
         val body = TextView(this)
         body.text = "In the @mboxstoreappbot chat, tap Start. " +
-            "This page updates by itself when you're connected."
+            "This page updates by itself when you're connected.\n\n" +
+            "If the bot only sends its intro message, the link didn't " +
+            "carry your code — send this in the bot chat instead:\n" +
+            "/start link_" + (connectCode ?: "")
         body.textSize = 13.5f
         body.setTextColor(getColor(R.color.text_secondary))
         val bLp = LinearLayout.LayoutParams(
@@ -703,7 +706,18 @@ class MainActivity : AppCompatActivity() {
                     connectCode = code
                     connectAttempts = 0
                     refreshProfile()
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+                    // Open the Telegram APP directly via its tg:// scheme —
+                    // an https://t.me intent can land in a browser and the
+                    // start payload never reaches the bot. Fall back to the
+                    // https link only when no Telegram app handles tg://.
+                    val tgUri = Uri.parse(
+                        "tg://resolve?domain=mboxstoreappbot&start=link_" + code
+                    )
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, tgUri))
+                    } catch (e: Exception) {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+                    }
                     scheduleConnectPoll()
                 }
             } catch (e: Exception) {
