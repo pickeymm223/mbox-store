@@ -1,22 +1,33 @@
 package com.mbox.store
 
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Outline
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.mbox.store.databinding.ActivityMainBinding
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
@@ -37,6 +48,11 @@ class MainActivity : AppCompatActivity() {
     private var popularApps: List<StoreApp> = emptyList()
     private var restApps: List<StoreApp> = emptyList()
     private var bannerTarget: StoreApp? = null
+
+    // Telegram connect flow state.
+    private var connectCode: String? = null
+    private var connectAttempts = 0
+    private val connectHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,16 +116,14 @@ class MainActivity : AppCompatActivity() {
         binding.allHead.setOnClickListener {
             enterFlat(getString(R.string.sec_all), restApps)
         }
-        val openSelf = {
-            startActivity(
-                Intent(this, DetailActivity::class.java)
-                    .putExtra(DetailActivity.EXTRA_PKG, packageName)
-            )
-        }
-        binding.selfUpdateBtn.setOnClickListener { openSelf() }
         binding.bottomNav.setOnItemSelectedListener { item ->
             showSection(item.itemId)
             true
+        }
+
+        if (intent.getStringExtra(EXTRA_TAB) == "profile") {
+            binding.bottomNav.selectedItemId = R.id.nav_profile
+            showSection(R.id.nav_profile)
         }
 
         if (Catalog.apps.isNotEmpty()) {
@@ -118,6 +132,31 @@ class MainActivity : AppCompatActivity() {
         } else {
             load()
         }
+
+        // If we hold a link token, confirm it is still valid server-side;
+        // a link revoked elsewhere should not linger on this device.
+        if (Account.isLinked(this)) {
+            thread {
+                val me = Account.fetchMe(this)
+                if (me == null) {
+                    Account.clear(this)
+                    runOnUiThread { refreshProfile() }
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getStringExtra(EXTRA_TAB) == "profile") {
+            binding.bottomNav.selectedItemId = R.id.nav_profile
+            showSection(R.id.nav_profile)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        connectHandler.removeCallbacksAndMessages(null)
     }
 
     override fun onResume() {
@@ -287,7 +326,7 @@ class MainActivity : AppCompatActivity() {
         ).filter { it.apps.isNotEmpty() }
     }
 
-    // ---- Updates / Profile / self-update (unchanged behaviour) ----
+    // ---- Updates ----
 
     /** The store's own catalog entry when a newer version exists. */
     private fun ownUpdate(): StoreApp? {
@@ -296,23 +335,12 @@ class MainActivity : AppCompatActivity() {
         return if (entry.versionCode > installed) entry else null
     }
 
-    private fun refreshSelfUpdate() {
-        val upd = ownUpdate()
-        if (upd != null) {
-            binding.selfUpdateText.text =
-                "${getString(R.string.self_update_available)} (v${upd.versionName})"
-            binding.selfUpdateBtn.visibility = View.VISIBLE
-        } else {
-            binding.selfUpdateText.text = getString(R.string.self_latest)
-            binding.selfUpdateBtn.visibility = View.GONE
-        }
-    }
+    private fun updatesAvailable(): List<StoreApp> =
+        allApps.filter { Installer.stateFor(this, it) == Installer.State.UPDATE }
 
     private fun refreshUpdates() {
         if (allApps.isEmpty()) return
-        val updates = allApps.filter {
-            Installer.stateFor(this, it) == Installer.State.UPDATE
-        }
+        val updates = updatesAvailable()
         updatesAdapter.submit(updates)
         binding.updatesSummary.text = when {
             updates.isEmpty() -> ""
@@ -322,51 +350,424 @@ class MainActivity : AppCompatActivity() {
         binding.updatesEmpty.visibility = if (updates.isEmpty()) View.VISIBLE else View.GONE
     }
 
-    private fun refreshProfile() {
-        binding.profileVersion.text = "Version ${BuildConfig.VERSION_NAME}"
-        refreshSelfUpdate()
+    // ---- Profile (Play-style grouped menu, own wording) ----
 
-        val mine = allApps.filter { Installer.installedVersion(this, it.pkg) >= 0L }
-        binding.myAppsBox.removeAllViews()
-        if (mine.isEmpty()) {
-            binding.myAppsBox.addView(dimText(getString(R.string.no_my_apps)))
+    private fun refreshProfile() {
+        val box = binding.profileBox
+        box.removeAllViews()
+        val linked = Account.isLinked(this)
+
+        if (linked) {
+            box.addView(accountCard())
+        } else if (connectCode != null) {
+            box.addView(connectWaitingCard())
         } else {
-            for (app in mine) {
-                val state = when (Installer.stateFor(this, app)) {
-                    Installer.State.UPDATE -> "Update available"
-                    else -> "Installed"
-                }
-                binding.myAppsBox.addView(rowText("${app.name} — $state"))
-            }
+            box.addView(connectCard())
         }
 
-        val history = History.all(this)
-        binding.historyBox.removeAllViews()
-        if (history.isEmpty()) {
-            binding.historyBox.addView(dimText(getString(R.string.no_history)))
+        val manage = Ui.row(
+            this, R.drawable.ic_row_plane, "#2AABEE",
+            "Manage your Telegram connection",
+            sub = if (linked) "Connected" else "Not connected"
+        ) { onManageConnection() }
+        val manageGroup = LinearLayout(this)
+        manageGroup.orientation = LinearLayout.VERTICAL
+        manageGroup.background = Ui.cardBg(this)
+        val mgLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        mgLp.topMargin = Ui.dp(this, 12)
+        manageGroup.layoutParams = mgLp
+        manageGroup.addView(manage)
+        box.addView(manageGroup)
+
+        val updates = if (allApps.isEmpty()) emptyList() else updatesAvailable()
+        val group1 = Ui.group(
+            this,
+            Ui.row(
+                this, R.drawable.ic_row_grid, "#2EC4B6",
+                "Manage apps & device"
+            ) {
+                binding.bottomNav.selectedItemId = R.id.nav_updates
+                showSection(R.id.nav_updates)
+            },
+            Ui.row(
+                this, R.drawable.ic_row_bell, "#FFC94D",
+                "Notifications & offers",
+                badge = if (updates.isNotEmpty()) updates.size.toString() else null
+            ) { openNotifications(updates) },
+            Ui.row(
+                this, R.drawable.ic_row_card, "#6EC1E4",
+                "Payments & purchases",
+                sub = "Telegram Stars · purchase history"
+            ) { InfoActivity.open(this, "Payments & purchases", Texts.PURCHASES) },
+            Ui.row(
+                this, R.drawable.ic_row_shield, "#7FD1AE",
+                "App verification",
+                sub = "Every APK signature-checked before install"
+            ) { InfoActivity.open(this, "App verification", Texts.VERIFICATION) },
+            Ui.row(
+                this, R.drawable.ic_row_folder, "#B39DDB",
+                "Library",
+                sub = "Purchased & downloaded apps"
+            ) { startActivity(Intent(this, LibraryActivity::class.java)) },
+            Ui.row(
+                this, R.drawable.ic_row_star, "#FFC94D",
+                "Support sent",
+                sub = "Stars you sent to developers"
+            ) { InfoActivity.open(this, "Support sent", Texts.SUPPORT) }
+        )
+        val g1Lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        g1Lp.topMargin = Ui.dp(this, 12)
+        group1.layoutParams = g1Lp
+        box.addView(group1)
+
+        val group2 = Ui.group(
+            this,
+            Ui.row(
+                this, R.drawable.ic_row_person, "#F48FB1",
+                "Personalization in MBOX Store"
+            ) { startActivity(Intent(this, SettingsActivity::class.java)) },
+            Ui.row(
+                this, R.drawable.ic_row_sliders, "#9AA7B1",
+                "Settings"
+            ) { startActivity(Intent(this, SettingsActivity::class.java)) },
+            Ui.row(
+                this, R.drawable.ic_row_info, "#6EC1E4",
+                "Help & feedback"
+            ) {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Account.BOT_LINK)))
+            }
+        )
+        val g2Lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        g2Lp.topMargin = Ui.dp(this, 12)
+        group2.layoutParams = g2Lp
+        box.addView(group2)
+
+        box.addView(legalFooter())
+    }
+
+    private fun accountCard(): View {
+        val user = Account.user(this)
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.HORIZONTAL
+        card.gravity = Gravity.CENTER_VERTICAL
+        card.background = Ui.cardBg(this, 26)
+        card.setPadding(
+            Ui.dp(this, 18), Ui.dp(this, 18),
+            Ui.dp(this, 18), Ui.dp(this, 18)
+        )
+        val avatar = ImageView(this)
+        val aLp = LinearLayout.LayoutParams(Ui.dp(this, 58), Ui.dp(this, 58))
+        avatar.layoutParams = aLp
+        avatar.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+        avatar.clipToOutline = true
+        if (user != null && user.avatarUrl.isNotEmpty()) {
+            IconLoader.load(user.avatarUrl, avatar)
         } else {
-            val fmt = SimpleDateFormat("d MMM yyyy, h:mm a", Locale.ENGLISH)
-            for (e in history) {
-                binding.historyBox.addView(
-                    rowText("${e.name} • v${e.versionName} • ${fmt.format(Date(e.atMillis))}")
+            avatar.setImageResource(R.drawable.ic_launcher)
+        }
+        card.addView(avatar)
+        val texts = LinearLayout(this)
+        texts.orientation = LinearLayout.VERTICAL
+        val tLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT)
+        tLp.weight = 1f
+        tLp.marginStart = Ui.dp(this, 14)
+        texts.layoutParams = tLp
+        val name = TextView(this)
+        name.text = user?.name?.ifEmpty { "Telegram user" } ?: "Telegram user"
+        name.textSize = 18f
+        name.setTextColor(getColor(R.color.text_primary))
+        name.setTypeface(name.typeface, android.graphics.Typeface.BOLD)
+        texts.addView(name)
+        val sub = TextView(this)
+        sub.text = "Connected with Telegram"
+        sub.textSize = 13.5f
+        sub.setTextColor(Color.parseColor("#2AABEE"))
+        val sLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        sLp.topMargin = Ui.dp(this, 3)
+        sub.layoutParams = sLp
+        texts.addView(sub)
+        card.addView(texts)
+        card.setOnClickListener { onManageConnection() }
+        return card
+    }
+
+    private fun connectCard(): View {
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.background = Ui.cardBg(this, 26)
+        card.setPadding(
+            Ui.dp(this, 18), Ui.dp(this, 18),
+            Ui.dp(this, 18), Ui.dp(this, 18)
+        )
+        val title = TextView(this)
+        title.text = "Connect Telegram"
+        title.textSize = 18f
+        title.setTextColor(getColor(R.color.text_primary))
+        title.setTypeface(title.typeface, android.graphics.Typeface.BOLD)
+        card.addView(title)
+        val body = TextView(this)
+        body.text = "Sync your purchases, get update alerts in Telegram, " +
+            "and pay with Telegram Stars. Free downloads never need an account."
+        body.textSize = 14f
+        body.setTextColor(getColor(R.color.text_secondary))
+        val bLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        bLp.topMargin = Ui.dp(this, 6)
+        body.layoutParams = bLp
+        card.addView(body)
+        val btn = Button(this)
+        btn.text = "Connect Telegram"
+        btn.setTextColor(Color.parseColor("#06231F"))
+        val bg = GradientDrawable()
+        bg.shape = GradientDrawable.RECTANGLE
+        bg.cornerRadius = Ui.dp(this, 24).toFloat()
+        bg.setColor(getColor(R.color.accent))
+        btn.background = bg
+        val btnLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        btnLp.topMargin = Ui.dp(this, 14)
+        btn.layoutParams = btnLp
+        btn.setOnClickListener { startConnect() }
+        card.addView(btn)
+        return card
+    }
+
+    private fun connectWaitingCard(): View {
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.background = Ui.cardBg(this, 26)
+        card.setPadding(
+            Ui.dp(this, 18), Ui.dp(this, 18),
+            Ui.dp(this, 18), Ui.dp(this, 18)
+        )
+        val rowTop = LinearLayout(this)
+        rowTop.orientation = LinearLayout.HORIZONTAL
+        rowTop.gravity = Gravity.CENTER_VERTICAL
+        val spin = ProgressBar(this)
+        val spLp = LinearLayout.LayoutParams(Ui.dp(this, 22), Ui.dp(this, 22))
+        spin.layoutParams = spLp
+        rowTop.addView(spin)
+        val title = TextView(this)
+        title.text = "Waiting for Telegram…"
+        title.textSize = 16.5f
+        title.setTextColor(getColor(R.color.text_primary))
+        val tLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        tLp.marginStart = Ui.dp(this, 12)
+        title.layoutParams = tLp
+        rowTop.addView(title)
+        card.addView(rowTop)
+        val body = TextView(this)
+        body.text = "In the @mboxstoreappbot chat, tap Start. " +
+            "This page updates by itself when you're connected."
+        body.textSize = 13.5f
+        body.setTextColor(getColor(R.color.text_secondary))
+        val bLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        bLp.topMargin = Ui.dp(this, 8)
+        body.layoutParams = bLp
+        card.addView(body)
+        val cancel = TextView(this)
+        cancel.text = "Cancel"
+        cancel.textSize = 14.5f
+        cancel.setTextColor(Color.parseColor("#E8736A"))
+        val cLp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        cLp.topMargin = Ui.dp(this, 12)
+        cancel.layoutParams = cLp
+        cancel.setOnClickListener { cancelConnect() }
+        card.addView(cancel)
+        return card
+    }
+
+    private fun legalFooter(): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        lp.topMargin = Ui.dp(this, 22)
+        row.layoutParams = lp
+        val privacy = TextView(this)
+        privacy.text = "Privacy Policy"
+        privacy.textSize = 13f
+        privacy.setTextColor(getColor(R.color.text_secondary))
+        privacy.setOnClickListener {
+            InfoActivity.open(this, "Privacy Policy", Texts.PRIVACY)
+        }
+        row.addView(privacy)
+        val dot = TextView(this)
+        dot.text = "  ·  "
+        dot.textSize = 13f
+        dot.setTextColor(getColor(R.color.text_secondary))
+        row.addView(dot)
+        val terms = TextView(this)
+        terms.text = "Terms of Service"
+        terms.textSize = 13f
+        terms.setTextColor(getColor(R.color.text_secondary))
+        terms.setOnClickListener {
+            InfoActivity.open(this, "Terms of Service", Texts.TERMS)
+        }
+        row.addView(terms)
+        return row
+    }
+
+    private fun openNotifications(updates: List<StoreApp>) {
+        val body = if (updates.isEmpty()) {
+            "You're all caught up.\n\nWhen an app you installed from " +
+                "MBOX Store has an update, it will be listed here — and, " +
+                "if you're connected, sent to you in Telegram."
+        } else {
+            buildString {
+                append("Updates available:\n")
+                for (app in updates) {
+                    append("\n• ${app.name} — version ${app.versionName}")
+                }
+                append(
+                    "\n\nOpen the Updates tab to install them. " +
+                        "Connected accounts also get these alerts in Telegram."
                 )
             }
         }
+        InfoActivity.open(this, "Notifications & offers", body)
     }
 
-    private fun rowText(text: String): TextView {
-        val tv = TextView(this)
-        tv.text = text
-        tv.textSize = 14f
-        tv.setTextColor(getColor(R.color.text_primary))
-        tv.setPadding(0, 6, 0, 6)
-        return tv
+    private fun onManageConnection() {
+        if (!Account.isLinked(this)) {
+            if (connectCode == null) startConnect()
+            return
+        }
+        val user = Account.user(this)
+        val who = when {
+            !user?.username.isNullOrEmpty() -> "@${user?.username}"
+            else -> user?.name ?: "your Telegram account"
+        }
+        AlertDialog.Builder(this)
+            .setTitle(user?.name ?: "Telegram")
+            .setMessage(
+                "Connected as $who.\n\n" +
+                    "Disconnecting removes the link on this device and on " +
+                    "the server. Purchases stay recorded to your Telegram " +
+                    "account."
+            )
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Disconnect") { _, _ ->
+                thread {
+                    Account.unlink(this)
+                    runOnUiThread {
+                        Toast.makeText(
+                            this, "Disconnected from Telegram",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        refreshProfile()
+                    }
+                }
+            }
+            .show()
     }
 
-    private fun dimText(text: String): TextView {
-        val tv = rowText(text)
-        tv.setTextColor(getColor(R.color.text_secondary))
-        return tv
+    private fun startConnect() {
+        Toast.makeText(this, "Opening Telegram…", Toast.LENGTH_SHORT).show()
+        thread {
+            try {
+                val (code, link) = Account.createSession()
+                runOnUiThread {
+                    connectCode = code
+                    connectAttempts = 0
+                    refreshProfile()
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+                    scheduleConnectPoll()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "Could not start the connection. Check your internet and try again.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun scheduleConnectPoll() {
+        val code = connectCode ?: return
+        connectHandler.postDelayed({
+            if (connectCode != code) return@postDelayed
+            thread {
+                val result = try {
+                    Account.pollStatus(code)
+                } catch (e: Exception) {
+                    Account.Poll.Pending
+                }
+                runOnUiThread {
+                    if (connectCode != code) return@runOnUiThread
+                    when (result) {
+                        is Account.Poll.Linked -> {
+                            Account.save(this, result.linkToken, result.user)
+                            connectCode = null
+                            Toast.makeText(
+                                this, "Connected with Telegram",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            refreshProfile()
+                        }
+                        Account.Poll.Expired -> {
+                            connectCode = null
+                            Toast.makeText(
+                                this,
+                                "That connect link expired — tap Connect to try again.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            refreshProfile()
+                        }
+                        Account.Poll.Pending -> {
+                            connectAttempts++
+                            if (connectAttempts > 150) {
+                                connectCode = null
+                                refreshProfile()
+                            } else {
+                                scheduleConnectPoll()
+                            }
+                        }
+                    }
+                }
+            }
+        }, 2000)
+    }
+
+    private fun cancelConnect() {
+        connectCode = null
+        connectHandler.removeCallbacksAndMessages(null)
+        refreshProfile()
     }
 
     inner class CategoryAdapter(
@@ -406,6 +807,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val EXTRA_TAB = "tab"
+
         private val ESSENTIAL_PKGS = listOf(
             "com.opera.mini.native",
             "com.psiphon3",
