@@ -64,6 +64,8 @@ object Account {
 
     fun clear(context: Context) {
         prefs(context).edit().clear().apply()
+        // Purchases belong to the link; drop the on-device cache too.
+        PayCache.clear(context)
     }
 
     /** POST /connect/create -> (code, telegram deep link). */
