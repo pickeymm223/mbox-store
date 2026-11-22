@@ -56,13 +56,56 @@
             </LinearLayout>
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/price"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:textColor="@color/accent"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <Button
             android:id="@+id/action"
             style="@style/Widget.MBOXStore.ActionButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="12dp"
             android:text="Install" />
+
+        <Button
+            android:id="@+id/supportBtn"
+            style="@style/Widget.MBOXStore.SecondaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Support the developer"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/iapBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="In-app purchases"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/iapRows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical" />
+        </LinearLayout>
 
         <ProgressBar
             android:id="@+id/progress"
