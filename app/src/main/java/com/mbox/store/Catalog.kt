@@ -4,6 +4,14 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
+/** A purchasable product inside a listed app (MBOX Pay, Level 2). */
+data class IapProduct(
+    val id: String,
+    val label: String,
+    val priceStars: Int,
+    val priceUsdt: Double
+)
+
 /** One app listed in the MBOX Store catalog. */
 data class StoreApp(
     val pkg: String,
@@ -19,8 +27,18 @@ data class StoreApp(
     val certSha256: String,
     val description: String,
     val changelog: String,
-    val screenshots: List<String> = emptyList()
-)
+    val screenshots: List<String> = emptyList(),
+    /** MBOX Pay: price of the app itself (0 = free / not sold on that rail). */
+    val priceStars: Int = 0,
+    val priceUsdt: Double = 0.0,
+    /** SHA-256 of the APK file itself; verified after download when set. */
+    val sha256: String = "",
+    /** True when the developer accepts support payments through the store. */
+    val support: Boolean = false,
+    val iap: List<IapProduct> = emptyList()
+) {
+    val isPaid: Boolean get() = priceStars > 0 || priceUsdt > 0
+}
 
 object Catalog {
     const val CATALOG_URL = "https://mbox-store-api.zawminhtet723.workers.dev/catalog.json"
@@ -68,7 +86,31 @@ object Catalog {
                     certSha256 = o.optString("certSha256"),
                     description = o.optString("description"),
                     changelog = o.optString("changelog"),
-                    screenshots = parseShots(o.optJSONArray("screenshots"))
+                    screenshots = parseShots(o.optJSONArray("screenshots")),
+                    priceStars = o.optInt("priceStars", 0),
+                    priceUsdt = o.optDouble("priceUsdt", 0.0),
+                    sha256 = o.optString("sha256"),
+                    support = o.optBoolean("support", false),
+                    iap = parseIap(o.optJSONArray("iap"))
+                )
+            )
+        }
+        return out
+    }
+
+    private fun parseIap(arr: org.json.JSONArray?): List<IapProduct> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<IapProduct>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val id = o.optString("id").trim()
+            if (id.isEmpty()) continue
+            out.add(
+                IapProduct(
+                    id = id,
+                    label = o.optString("label", id),
+                    priceStars = o.optInt("priceStars", 0),
+                    priceUsdt = o.optDouble("priceUsdt", 0.0)
                 )
             )
         }
