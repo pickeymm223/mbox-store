@@ -1,11 +1,14 @@
 package com.mbox.store
 
-import android.app.DownloadManager
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.mbox.store.databinding.ActivityDetailBinding
 import java.io.File
 import kotlin.concurrent.thread
@@ -25,7 +28,7 @@ class DetailActivity : AppCompatActivity() {
     private val pollTick = object : Runnable {
         override fun run() {
             if (!polling) return
-            pollDownload(autoInstall = true)
+            pollDownload()
             handler.postDelayed(this, 1000)
         }
     }
@@ -105,9 +108,8 @@ class DetailActivity : AppCompatActivity() {
             Installer.State.OPEN -> Installer.openApp(this, a.pkg)
             else -> {
                 // A finished download waiting for its install tap?
-                val id = Downloader.trackedId(this, a.pkg)
-                val p = if (id != -1L) Downloader.query(this, id) else null
-                if (p != null && p.status == DownloadManager.STATUS_SUCCESSFUL) {
+                val p = Downloader.query(this, a.pkg)
+                if (p != null && p.status == Downloader.STATUS_SUCCESSFUL) {
                     verifyAndInstall(a, Downloader.destFile(this, a))
                 } else {
                     startDownload(a)
@@ -133,6 +135,17 @@ class DetailActivity : AppCompatActivity() {
             Installer.openUnknownSourcesSettings(this)
             return
         }
+        // Download progress lives in the notification shade; on Android 13+
+        // that needs the notification permission.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS), 41
+            )
+        }
         Downloader.enqueue(this, a)
         showDownloading(0, a.sizeBytes)
         startPolling()
@@ -141,18 +154,10 @@ class DetailActivity : AppCompatActivity() {
     /** Re-attach the UI to a download started earlier (running or finished). */
     private fun syncDownloadUi() {
         val a = app ?: return
-        val id = Downloader.trackedId(this, a.pkg)
-        if (id == -1L) {
-            refreshState()
-            return
-        }
-        val p = Downloader.query(this, id)
+        val p = Downloader.query(this, a.pkg)
         when {
-            p == null -> {
-                Downloader.forget(this, a.pkg)
-                refreshState()
-            }
-            p.status == DownloadManager.STATUS_SUCCESSFUL -> {
+            p == null -> refreshState()
+            p.status == Downloader.STATUS_SUCCESSFUL -> {
                 if (Installer.installedVersion(this, a.pkg) >= a.versionCode) {
                     Downloader.forget(this, a.pkg)
                     refreshState()
@@ -161,11 +166,22 @@ class DetailActivity : AppCompatActivity() {
                     setStatus("Download complete — tap the button to install.")
                 }
             }
-            p.status == DownloadManager.STATUS_FAILED -> {
+            p.status == Downloader.STATUS_FAILED -> {
                 Downloader.forget(this, a.pkg)
                 Downloader.destFile(this, a).delete()
                 refreshState()
-                setStatus("Download failed. Check your connection and try again.")
+                setStatus(
+                    p.reason.ifEmpty {
+                        "Download failed. Check your connection and try again."
+                    }
+                )
+            }
+            p.status == Downloader.STATUS_PAUSED -> {
+                refreshState()
+                binding.action.isEnabled = false
+                binding.action.text = "Waiting…"
+                binding.cancel.visibility = View.VISIBLE
+                setStatus(p.reason)
             }
             else -> {
                 showDownloading(p.done, if (p.total > 0) p.total else a.sizeBytes)
@@ -174,27 +190,42 @@ class DetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun pollDownload(autoInstall: Boolean) {
+    private fun pollDownload() {
         val a = app ?: return
-        val id = Downloader.trackedId(this, a.pkg)
-        if (id == -1L) {
+        val p = Downloader.query(this, a.pkg)
+        if (p == null) {
             stopPolling()
+            refreshState()
             return
         }
-        val p = Downloader.query(this, id) ?: return
         when (p.status) {
-            DownloadManager.STATUS_SUCCESSFUL -> {
+            Downloader.STATUS_SUCCESSFUL -> {
                 stopPolling()
-                if (autoInstall) {
+                if (Prefs.askBeforeInstall(this)) {
+                    refreshState()
+                    setStatus("Download complete — tap the button to install.")
+                } else {
                     verifyAndInstall(a, Downloader.destFile(this, a))
                 }
             }
-            DownloadManager.STATUS_FAILED -> {
+            Downloader.STATUS_FAILED -> {
                 stopPolling()
                 Downloader.forget(this, a.pkg)
                 Downloader.destFile(this, a).delete()
                 refreshState()
-                setStatus("Download failed. Check your connection and try again.")
+                setStatus(
+                    p.reason.ifEmpty {
+                        "Download failed. Check your connection and try again."
+                    }
+                )
+            }
+            Downloader.STATUS_PAUSED -> {
+                stopPolling()
+                refreshState()
+                binding.action.isEnabled = false
+                binding.action.text = "Waiting…"
+                binding.cancel.visibility = View.VISIBLE
+                setStatus(p.reason)
             }
             else -> showDownloading(p.done, if (p.total > 0) p.total else a.sizeBytes)
         }
