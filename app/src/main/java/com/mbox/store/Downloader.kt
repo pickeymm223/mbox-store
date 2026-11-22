@@ -1,92 +1,89 @@
 package com.mbox.store
 
-import android.app.DownloadManager
 import android.content.Context
-import android.database.Cursor
-import android.net.Uri
+import org.json.JSONObject
 import java.io.File
 
 /**
- * Downloads run through the system DownloadManager, so every download gets
- * a notification-shade entry with live progress and a working Cancel, and
- * keeps going when the user leaves the detail page. The tracked download id
- * per package is kept in SharedPreferences so the page can re-attach to a
- * running (or finished) download when the user comes back.
+ * Download state, owned by DownloadService (the store's own download
+ * engine — the system DownloadManager could not show the store's logo in
+ * its notifications). The service records each download's progress in
+ * SharedPreferences so any screen can attach to it, and posts a
+ * logo-carrying notification with live progress and a Cancel action.
+ *
+ * Status values mirror the old DownloadManager constants.
  */
 object Downloader {
 
-    private const val PREFS = "downloads"
+    const val STATUS_PENDING = 1
+    const val STATUS_RUNNING = 2
+    const val STATUS_PAUSED = 4
+    const val STATUS_SUCCESSFUL = 8
+    const val STATUS_FAILED = 16
 
-    data class Progress(val status: Int, val done: Long, val total: Long)
+    private const val PREFS = "downloads"
+    private const val KEY_PREFIX = "state:"
+
+    data class Progress(
+        val status: Int,
+        val done: Long,
+        val total: Long,
+        val reason: String = ""
+    )
 
     fun destFile(context: Context, app: StoreApp): File {
         val dir = File(context.getExternalFilesDir(null), "apks").apply { mkdirs() }
         return File(dir, "${app.pkg}-${app.versionCode}.apk")
     }
 
-    fun enqueue(context: Context, app: StoreApp): Long {
-        val dm = manager(context)
-        // A stale partial file at the destination makes DownloadManager fail.
-        destFile(context, app).delete()
-        val req = DownloadManager.Request(Uri.parse(app.apkUrl))
-            .setTitle(app.name)
-            .setDescription("Downloading ${app.name}…")
-            .setNotificationVisibility(
-                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-            )
-            .setDestinationInExternalFilesDir(
-                context, null, "apks/${app.pkg}-${app.versionCode}.apk"
-            )
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(true)
-            .addRequestHeader("User-Agent", "MBOXStore-Android")
-        val id = dm.enqueue(req)
-        prefs(context).edit().putLong(app.pkg, id).apply()
-        return id
+    fun partFile(context: Context, app: StoreApp): File =
+        File(destFile(context, app).absolutePath + ".part")
+
+    fun enqueue(context: Context, app: StoreApp) {
+        writeState(
+            context, app.pkg,
+            Progress(STATUS_PENDING, 0, app.sizeBytes)
+        )
+        DownloadService.start(context, app)
     }
 
-    fun trackedId(context: Context, pkg: String): Long =
-        prefs(context).getLong(pkg, -1L)
+    fun hasState(context: Context, pkg: String): Boolean =
+        prefs(context).contains(KEY_PREFIX + pkg)
 
-    fun query(context: Context, id: Long): Progress? {
-        val dm = manager(context)
-        var cursor: Cursor? = null
+    fun query(context: Context, pkg: String): Progress? {
+        val raw = prefs(context).getString(KEY_PREFIX + pkg, null) ?: return null
         return try {
-            cursor = dm.query(DownloadManager.Query().setFilterById(id))
-            if (cursor != null && cursor.moveToFirst()) {
-                val status = cursor.getInt(
-                    cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)
-                )
-                val done = cursor.getLong(
-                    cursor.getColumnIndexOrThrow(
-                        DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR
-                    )
-                )
-                val total = cursor.getLong(
-                    cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-                )
-                Progress(status, done, total)
-            } else null
+            val j = JSONObject(raw)
+            Progress(
+                status = j.getInt("status"),
+                done = j.optLong("done"),
+                total = j.optLong("total"),
+                reason = j.optString("reason")
+            )
         } catch (e: Exception) {
             null
-        } finally {
-            cursor?.close()
         }
     }
 
+    fun writeState(context: Context, pkg: String, progress: Progress) {
+        val j = JSONObject()
+            .put("status", progress.status)
+            .put("done", progress.done)
+            .put("total", progress.total)
+            .put("reason", progress.reason)
+        prefs(context).edit().putString(KEY_PREFIX + pkg, j.toString()).apply()
+    }
+
     fun cancel(context: Context, app: StoreApp) {
-        val id = trackedId(context, app.pkg)
-        if (id != -1L) manager(context).remove(id)
+        DownloadService.cancel(context, app.pkg)
         forget(context, app.pkg)
         destFile(context, app).delete()
+        partFile(context, app).delete()
     }
 
     fun forget(context: Context, pkg: String) {
-        prefs(context).edit().remove(pkg).apply()
+        prefs(context).edit().remove(KEY_PREFIX + pkg).apply()
     }
-
-    private fun manager(context: Context): DownloadManager =
-        context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
