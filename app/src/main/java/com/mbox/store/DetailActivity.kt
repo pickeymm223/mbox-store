@@ -1,16 +1,24 @@
 package com.mbox.store
 
 import android.Manifest
+import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.mbox.store.databinding.ActivityDetailBinding
 import java.io.File
+import java.security.MessageDigest
 import kotlin.concurrent.thread
 
 class DetailActivity : AppCompatActivity() {
@@ -30,6 +38,17 @@ class DetailActivity : AppCompatActivity() {
             if (!polling) return
             pollDownload()
             handler.postDelayed(this, 1000)
+        }
+    }
+
+    // MBOX Pay: watch a created order until Telegram / the chain settles it.
+    private var orderPolling = false
+    private var watchedOrderId: String? = null
+    private val orderTick = object : Runnable {
+        override fun run() {
+            if (!orderPolling) return
+            pollOrderOnce()
+            handler.postDelayed(this, 4000)
         }
     }
 
@@ -77,17 +96,32 @@ class DetailActivity : AppCompatActivity() {
         binding.cert.text = a.certSha256
         binding.action.setOnClickListener { onAction() }
         binding.cancel.setOnClickListener { onCancel() }
+        binding.supportBtn.setOnClickListener { app?.let { onSupport(it) } }
         refreshState()
+        renderPay()
     }
 
     override fun onResume() {
         super.onResume()
         if (!verifying) syncDownloadUi()
+        val a = app
+        if (a != null && (a.isPaid || a.support || a.iap.isNotEmpty()) &&
+            Account.isLinked(this)
+        ) {
+            thread {
+                PayCache.refresh(this)
+                runOnUiThread {
+                    refreshState()
+                    renderPay()
+                }
+            }
+        }
     }
 
     override fun onPause() {
         super.onPause()
         stopPolling()
+        stopOrderPolling()
     }
 
     private fun refreshState() {
@@ -96,9 +130,10 @@ class DetailActivity : AppCompatActivity() {
         binding.cancel.visibility = View.GONE
         binding.progress.visibility = View.GONE
         binding.action.text = when (Installer.stateFor(this, a)) {
-            Installer.State.GET -> "Install"
-            Installer.State.UPDATE -> "Update"
             Installer.State.OPEN -> "Open"
+            Installer.State.UPDATE -> "Update"
+            else ->
+                if (a.isPaid && !PayCache.owns(this, a.pkg)) "Buy" else "Install"
         }
     }
 
@@ -107,6 +142,10 @@ class DetailActivity : AppCompatActivity() {
         when (Installer.stateFor(this, a)) {
             Installer.State.OPEN -> Installer.openApp(this, a.pkg)
             else -> {
+                if (a.isPaid && !PayCache.owns(this, a.pkg)) {
+                    startBuy(a)
+                    return
+                }
                 // A finished download waiting for its install tap?
                 val p = Downloader.query(this, a.pkg)
                 if (p != null && p.status == Downloader.STATUS_SUCCESSFUL) {
@@ -257,6 +296,249 @@ class DetailActivity : AppCompatActivity() {
         handler.removeCallbacks(pollTick)
     }
 
+    // ---- MBOX Pay ----
+
+    private fun renderPay() {
+        val a = app ?: return
+        if (a.isPaid) {
+            binding.price.visibility = View.VISIBLE
+            binding.price.text = priceText(a.priceStars, a.priceUsdt)
+        } else {
+            binding.price.visibility = View.GONE
+        }
+        binding.supportBtn.visibility = if (a.support) View.VISIBLE else View.GONE
+        binding.iapRows.removeAllViews()
+        binding.iapBox.visibility =
+            if (a.iap.isNotEmpty()) View.VISIBLE else View.GONE
+        for (p in a.iap) {
+            binding.iapRows.addView(iapRow(a, p))
+        }
+    }
+
+    private fun iapRow(a: StoreApp, p: IapProduct): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 8))
+        val texts = LinearLayout(this)
+        texts.orientation = LinearLayout.VERTICAL
+        val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.weight = 1f
+        texts.layoutParams = lp
+        val t = TextView(this)
+        t.text = p.label
+        t.textSize = 15f
+        t.setTextColor(getColor(R.color.text_primary))
+        texts.addView(t)
+        val s = TextView(this)
+        s.text = priceText(p.priceStars, p.priceUsdt)
+        s.textSize = 12.5f
+        s.setTextColor(getColor(R.color.text_secondary))
+        texts.addView(s)
+        row.addView(texts)
+        val owned = PayCache.owns(this, a.pkg + ":" + p.id)
+        val b = Button(this)
+        b.text = if (owned) "Owned" else "Buy"
+        b.isEnabled = !owned
+        b.setOnClickListener {
+            if (!Account.isLinked(this)) {
+                promptConnect()
+                return@setOnClickListener
+            }
+            showRailSheet("iap", a.pkg, p.id, p.priceStars, p.priceUsdt, p.label)
+        }
+        row.addView(b)
+        return row
+    }
+
+    private fun priceText(stars: Int, usdt: Double): String {
+        val parts = ArrayList<String>()
+        if (stars > 0) parts.add("⭐ $stars")
+        if (usdt > 0) parts.add("₮ ${trimNum(usdt)}")
+        return parts.joinToString("  ·  ")
+    }
+
+    private fun trimNum(v: Double): String =
+        if (v == v.toLong().toDouble()) v.toLong().toString()
+        else String.format(java.util.Locale.US, "%.2f", v)
+
+    private fun promptConnect() {
+        setStatus(
+            "Purchases are tied to your Telegram account. Connect Telegram " +
+                "in Profile first — it is free and takes a few seconds."
+        )
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_TAB, "profile")
+        )
+    }
+
+    private fun startBuy(a: StoreApp) {
+        if (!Account.isLinked(this)) {
+            promptConnect()
+            return
+        }
+        showRailSheet("app", a.pkg, null, a.priceStars, a.priceUsdt, a.name)
+    }
+
+    private fun onSupport(a: StoreApp) {
+        if (!Account.isLinked(this)) {
+            promptConnect()
+            return
+        }
+        val presets = intArrayOf(10, 25, 50, 100)
+        val labels = presets.map { "⭐ $it Stars" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Support ${a.developer.ifEmpty { a.name }}")
+            .setItems(labels) { _, which ->
+                setStatus("Creating your support order…")
+                thread {
+                    val created = try {
+                        Pay.createOrder(
+                            this, "support", a.pkg, null, "stars",
+                            amountStars = presets[which]
+                        )
+                    } catch (e: Exception) {
+                        null
+                    }
+                    runOnUiThread {
+                        if (created == null) {
+                            setStatus("Could not create the order. Try again.")
+                        } else {
+                            setStatus(
+                                "Invoice sent to @mboxstoreappbot in Telegram " +
+                                    "— pay there to complete your support."
+                            )
+                            watchOrder(created.order.id)
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showRailSheet(
+        kind: String,
+        item: String,
+        productId: String?,
+        stars: Int,
+        usdt: Double,
+        label: String
+    ) {
+        val options = ArrayList<String>()
+        val rails = ArrayList<String>()
+        if (stars > 0) {
+            options.add("Telegram Stars — ⭐ $stars")
+            rails.add("stars")
+        }
+        if (usdt > 0) {
+            options.add("USDT (TON) — ₮ ${trimNum(usdt)}")
+            rails.add("usdt")
+        }
+        if (options.isEmpty()) return
+        if (options.size == 1) {
+            createOrder(kind, item, productId, rails[0], label)
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Pay for $label")
+            .setItems(options.toTypedArray()) { _, which ->
+                createOrder(kind, item, productId, rails[which], label)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun createOrder(
+        kind: String,
+        item: String,
+        productId: String?,
+        rail: String,
+        label: String
+    ) {
+        setStatus("Creating your order…")
+        thread {
+            val created = try {
+                Pay.createOrder(this, kind, item, productId, rail)
+            } catch (e: Exception) {
+                null
+            }
+            runOnUiThread {
+                if (created == null) {
+                    setStatus(
+                        "Could not create the order. Check your connection " +
+                            "and try again."
+                    )
+                    return@runOnUiThread
+                }
+                if (rail == "usdt") {
+                    startActivity(
+                        Intent(this, UsdtPayActivity::class.java)
+                            .putExtra(UsdtPayActivity.EXTRA_ORDER, created.order.id)
+                            .putExtra(UsdtPayActivity.EXTRA_ADDRESS, created.address)
+                            .putExtra(UsdtPayActivity.EXTRA_MEMO, created.order.memo)
+                            .putExtra(UsdtPayActivity.EXTRA_AMOUNT, created.order.amountUsdt)
+                            .putExtra(UsdtPayActivity.EXTRA_LABEL, label)
+                    )
+                    watchOrder(created.order.id)
+                } else {
+                    setStatus(
+                        if (created.invoiceSent)
+                            "Invoice sent to @mboxstoreappbot in Telegram — " +
+                                "pay there and this page unlocks by itself."
+                        else
+                            "Order created — open @mboxstoreappbot in " +
+                                "Telegram to pay."
+                    )
+                    watchOrder(created.order.id)
+                }
+            }
+        }
+    }
+
+    private fun watchOrder(id: String) {
+        watchedOrderId = id
+        if (orderPolling) return
+        orderPolling = true
+        handler.postDelayed(orderTick, 3000)
+    }
+
+    private fun stopOrderPolling() {
+        orderPolling = false
+        handler.removeCallbacks(orderTick)
+    }
+
+    private fun pollOrderOnce() {
+        val id = watchedOrderId
+        if (id == null) {
+            stopOrderPolling()
+            return
+        }
+        thread {
+            val o = try {
+                Pay.status(this, id)
+            } catch (e: Exception) {
+                null
+            }
+            when {
+                o != null && o.status == "paid" -> {
+                    PayCache.refresh(this)
+                    runOnUiThread {
+                        stopOrderPolling()
+                        setStatus("Payment received — thank you! You can install now.")
+                        refreshState()
+                        renderPay()
+                    }
+                }
+                o != null && o.status == "expired" -> runOnUiThread {
+                    stopOrderPolling()
+                    setStatus("That order expired. Tap Buy to try again.")
+                }
+            }
+        }
+    }
+
     private fun verifyAndInstall(a: StoreApp, dest: File) {
         if (verifying) return
         verifying = true
@@ -265,12 +547,16 @@ class DetailActivity : AppCompatActivity() {
         binding.progress.visibility = View.GONE
         setStatus("Checking the downloaded file…")
         thread {
-            // Verify the file really is the app we promised, signed with the
-            // catalog certificate, before handing it to the installer.
+            // Verify the file really is the app we promised: package name,
+            // the catalog file hash (when recorded), and the developer's
+            // signing certificate — before handing it to the installer.
             val archivePkg = Installer.apkPackageName(this, dest)
             val cert = Installer.apkCertSha256(this, dest)
             val certOk = a.certSha256.isEmpty() ||
                 (cert != null && normalize(a.certSha256) == normalize(cert))
+            val fileHash = if (a.sha256.isNotEmpty()) sha256Of(dest) else null
+            val hashOk = a.sha256.isEmpty() ||
+                (fileHash != null && normalize(fileHash) == normalize(a.sha256))
             runOnUiThread {
                 verifying = false
                 Downloader.forget(this, a.pkg)
@@ -279,6 +565,14 @@ class DetailActivity : AppCompatActivity() {
                         dest.delete()
                         refreshState()
                         setStatus("Downloaded file does not match this app. Cancelled.")
+                    }
+                    !hashOk -> {
+                        dest.delete()
+                        refreshState()
+                        setStatus(
+                            "File check failed — the download does not match " +
+                                "the catalog hash. Cancelled."
+                        )
                     }
                     !certOk -> {
                         dest.delete()
@@ -293,6 +587,23 @@ class DetailActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+    }
+
+    private fun sha256Of(f: File): String? {
+        return try {
+            val md = MessageDigest.getInstance("SHA-256")
+            f.inputStream().use { ins ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = ins.read(buf)
+                    if (n < 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            null
         }
     }
 
