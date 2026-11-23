@@ -48,6 +48,7 @@ class DetailActivity : AppCompatActivity() {
     }
 
     // MBOX Pay: watch a created order until Telegram / the chain settles it.
+    private var balanceUsdt: Double = 0.0
     private var orderPolling = false
     private var watchedOrderId: String? = null
     private val orderTick = object : Runnable {
@@ -138,6 +139,7 @@ class DetailActivity : AppCompatActivity() {
         binding.action.setOnClickListener { onAction() }
         binding.cancel.setOnClickListener { onCancel() }
         binding.supportBtn.setOnClickListener { app?.let { onSupport(it) } }
+        balanceUsdt = PayCache.balanceUsdt(this)
         refreshState()
         renderPay()
     }
@@ -151,7 +153,9 @@ class DetailActivity : AppCompatActivity() {
         ) {
             thread {
                 PayCache.refresh(this)
+                val bal = try { Pay.balance(this) } catch (e: Exception) { null }
                 runOnUiThread {
+                    if (bal != null) balanceUsdt = bal.usdt
                     refreshState()
                     renderPay()
                 }
@@ -431,10 +435,32 @@ class DetailActivity : AppCompatActivity() {
             return
         }
         val dev = a.developer.ifEmpty { a.name }
+        val railLabels = ArrayList<CharSequence>()
+        val railKeys = ArrayList<String>()
+        railLabels.add("Telegram Stars"); railKeys.add("stars")
+        railLabels.add("USDT (TON)"); railKeys.add("usdt")
+        if (balanceUsdt > 0) {
+            railLabels.add("MBOX Balance — ₮ ${trimNum(balanceUsdt)}")
+            railKeys.add("balance")
+        }
         AlertDialog.Builder(this)
             .setTitle("Support $dev")
-            .setItems(arrayOf("Telegram Stars", "USDT (TON)")) { _, railIdx ->
-                if (railIdx == 0) {
+            .setItems(railLabels.toTypedArray()) { _, railIdx ->
+                if (railKeys[railIdx] == "balance") {
+                    val presets = doubleArrayOf(0.5, 1.0, 2.5, 5.0)
+                        .filter { it <= balanceUsdt }
+                    val labels = ArrayList<CharSequence>()
+                    for (p in presets) labels.add("₮ ${trimNum(p)} USDT")
+                    labels.add("Custom amount…")
+                    AlertDialog.Builder(this)
+                        .setTitle("Support $dev — Balance")
+                        .setItems(labels.toTypedArray()) { _, which ->
+                            if (which == presets.size) promptCustomSupport(a, "balance")
+                            else createSupportOrder(a, "balance", 0, presets[which])
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                } else if (railKeys[railIdx] == "stars") {
                     val presets = intArrayOf(10, 25, 50, 100)
                     val labels = ArrayList<CharSequence>()
                     for (p in presets) labels.add(Ui.starText(this, "$p Stars", 18))
@@ -481,6 +507,12 @@ class DetailActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (created == null) {
                         setStatus("Could not create the order. Try again.")
+                    } else if (rail == "balance") {
+                        balanceUsdt = (balanceUsdt - usdt).coerceAtLeast(0.0)
+                        setStatus(
+                            "Paid from your MBOX balance — thank you for your support!"
+                        )
+                        thread { PayCache.refresh(this) }
                     } else if (rail == "usdt") {
                         startActivity(
                             Intent(this, UsdtPayActivity::class.java)
@@ -537,8 +569,13 @@ class DetailActivity : AppCompatActivity() {
                     val v = raw.toDoubleOrNull()
                     if (v == null || v < 0.1) {
                         setStatus("Enter a valid USDT amount (min 0.1).")
+                    } else if (rail == "balance" && v > balanceUsdt) {
+                        setStatus(
+                            "That is more than your MBOX balance " +
+                                "(₮ ${trimNum(balanceUsdt)}). Top up in Profile first."
+                        )
                     } else {
-                        createSupportOrder(a, "usdt", 0, v)
+                        createSupportOrder(a, rail, 0, v)
                     }
                 }
             }
@@ -556,6 +593,10 @@ class DetailActivity : AppCompatActivity() {
     ) {
         val options = ArrayList<CharSequence>()
         val rails = ArrayList<String>()
+        if (usdt > 0 && balanceUsdt >= usdt) {
+            options.add("MBOX Balance — ₮ ${trimNum(balanceUsdt)}")
+            rails.add("balance")
+        }
         if (stars > 0) {
             options.add(Ui.starText(this, "Telegram Stars — $stars", 18))
             rails.add("stars")
@@ -610,7 +651,21 @@ class DetailActivity : AppCompatActivity() {
                     )
                     return@runOnUiThread
                 }
-                if (rail == "usdt") {
+                if (rail == "balance") {
+                    setStatus(
+                        "Paid from your MBOX balance — thank you! " +
+                            "Your purchase is unlocked."
+                    )
+                    thread {
+                        PayCache.refresh(this)
+                        val bal = try { Pay.balance(this) } catch (e: Exception) { null }
+                        runOnUiThread {
+                            if (bal != null) balanceUsdt = bal.usdt
+                            refreshState()
+                            renderPay()
+                        }
+                    }
+                } else if (rail == "usdt") {
                     startActivity(
                         Intent(this, UsdtPayActivity::class.java)
                             .putExtra(UsdtPayActivity.EXTRA_ORDER, created.order.id)
