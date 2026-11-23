@@ -90,6 +90,24 @@ object Pay {
         return parseOrder(j.getJSONObject("order"))
     }
 
+    data class Balance(val usdt: Double, val depositMemo: String, val address: String)
+
+    /** GET /pay/balance — the read also makes the server credit any
+     *  fresh deposits carrying this account's deposit memo. */
+    fun balance(context: Context): Balance {
+        val t = Account.token(context)
+        val j = request(
+            "GET",
+            "/pay/balance?token=" + URLEncoder.encode(t, "UTF-8"),
+            null
+        )
+        return Balance(
+            usdt = j.optDouble("balanceUsdt", 0.0),
+            depositMemo = j.optString("depositMemo"),
+            address = j.optString("address")
+        )
+    }
+
     /** GET /pay/entitlements — item keys this account owns. */
     fun entitlements(context: Context): Set<String> {
         val t = Account.token(context)
@@ -174,6 +192,9 @@ object PayCache {
     fun supportUsdt(context: Context): Double =
         prefs(context).getString("support_usdt", "0")?.toDoubleOrNull() ?: 0.0
 
+    fun balanceUsdt(context: Context): Double =
+        prefs(context).getString("balance_usdt", "0")?.toDoubleOrNull() ?: 0.0
+
     fun payoutAddress(context: Context): String =
         prefs(context).getString("payout_address", "").orEmpty()
 
@@ -204,6 +225,14 @@ object PayCache {
                 .putInt("support_stars", sStars)
                 .putString("support_usdt", sUsdt.toString())
                 .apply()
+            try {
+                val bal = Pay.balance(context)
+                prefs(context).edit()
+                    .putString("balance_usdt", bal.usdt.toString())
+                    .apply()
+            } catch (e: Exception) {
+                // Balance cache stays stale; the next refresh retries.
+            }
         } catch (e: Exception) {
             // Keep the last known cache; the next refresh retries.
         }
