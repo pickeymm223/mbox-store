@@ -9,10 +9,14 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
+import android.text.SpannableStringBuilder
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -388,11 +392,14 @@ class DetailActivity : AppCompatActivity() {
         return row
     }
 
-    private fun priceText(stars: Int, usdt: Double): String {
-        val parts = ArrayList<String>()
-        if (stars > 0) parts.add("⭐ $stars")
-        if (usdt > 0) parts.add("₮ ${trimNum(usdt)}")
-        return parts.joinToString("  ·  ")
+    private fun priceText(stars: Int, usdt: Double): CharSequence {
+        val out = SpannableStringBuilder()
+        if (stars > 0) out.append(Ui.starText(this, stars.toString(), 14))
+        if (usdt > 0) {
+            if (out.isNotEmpty()) out.append("  ·  ")
+            out.append("₮ ${trimNum(usdt)}")
+        }
+        return out
     }
 
     private fun trimNum(v: Double): String =
@@ -429,21 +436,27 @@ class DetailActivity : AppCompatActivity() {
             .setItems(arrayOf("Telegram Stars", "USDT (TON)")) { _, railIdx ->
                 if (railIdx == 0) {
                     val presets = intArrayOf(10, 25, 50, 100)
-                    val labels = presets.map { "⭐ $it Stars" }.toTypedArray()
+                    val labels = ArrayList<CharSequence>()
+                    for (p in presets) labels.add(Ui.starText(this, "$p Stars", 18))
+                    labels.add("Custom amount…")
                     AlertDialog.Builder(this)
                         .setTitle("Support $dev — Stars")
-                        .setItems(labels) { _, which ->
-                            createSupportOrder(a, "stars", presets[which], 0.0)
+                        .setItems(labels.toTypedArray()) { _, which ->
+                            if (which == presets.size) promptCustomSupport(a, "stars")
+                            else createSupportOrder(a, "stars", presets[which], 0.0)
                         }
                         .setNegativeButton("Cancel", null)
                         .show()
                 } else {
                     val presets = doubleArrayOf(0.5, 1.0, 2.5, 5.0)
-                    val labels = presets.map { "₮ ${trimNum(it)} USDT" }.toTypedArray()
+                    val labels = ArrayList<CharSequence>()
+                    for (p in presets) labels.add("₮ ${trimNum(p)} USDT")
+                    labels.add("Custom amount…")
                     AlertDialog.Builder(this)
                         .setTitle("Support $dev — USDT")
-                        .setItems(labels) { _, which ->
-                            createSupportOrder(a, "usdt", 0, presets[which])
+                        .setItems(labels.toTypedArray()) { _, which ->
+                            if (which == presets.size) promptCustomSupport(a, "usdt")
+                            else createSupportOrder(a, "usdt", 0, presets[which])
                         }
                         .setNegativeButton("Cancel", null)
                         .show()
@@ -493,6 +506,46 @@ class DetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun promptCustomSupport(a: StoreApp, rail: String) {
+        val input = EditText(this)
+        input.inputType = if (rail == "stars")
+            InputType.TYPE_CLASS_NUMBER
+        else
+            InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        input.hint = if (rail == "stars") "Amount in Stars (min 1)" else "Amount in USDT (min 0.1)"
+        val wrap = FrameLayout(this)
+        val lp = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        lp.setMargins(Ui.dp(this, 20), Ui.dp(this, 8), Ui.dp(this, 20), 0)
+        input.layoutParams = lp
+        wrap.addView(input)
+        AlertDialog.Builder(this)
+            .setTitle("Custom amount")
+            .setView(wrap)
+            .setPositiveButton("Continue") { _, _ ->
+                val raw = input.text.toString().trim()
+                if (rail == "stars") {
+                    val v = raw.toIntOrNull()
+                    if (v == null || v < 1) {
+                        setStatus("Enter a valid Stars amount (min 1).")
+                    } else {
+                        createSupportOrder(a, "stars", v, 0.0)
+                    }
+                } else {
+                    val v = raw.toDoubleOrNull()
+                    if (v == null || v < 0.1) {
+                        setStatus("Enter a valid USDT amount (min 0.1).")
+                    } else {
+                        createSupportOrder(a, "usdt", 0, v)
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun showRailSheet(
         kind: String,
         item: String,
@@ -501,10 +554,10 @@ class DetailActivity : AppCompatActivity() {
         usdt: Double,
         label: String
     ) {
-        val options = ArrayList<String>()
+        val options = ArrayList<CharSequence>()
         val rails = ArrayList<String>()
         if (stars > 0) {
-            options.add("Telegram Stars — ⭐ $stars")
+            options.add(Ui.starText(this, "Telegram Stars — $stars", 18))
             rails.add("stars")
         }
         if (usdt > 0) {
