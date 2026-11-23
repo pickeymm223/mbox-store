@@ -2,6 +2,7 @@ package com.mbox.store
 
 import android.Manifest
 import android.app.AlertDialog
+import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -14,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.mbox.store.databinding.ActivityDetailBinding
@@ -50,6 +52,41 @@ class DetailActivity : AppCompatActivity() {
             pollOrderOnce()
             handler.postDelayed(this, 4000)
         }
+    }
+
+    // Purchase verification: the device lock (PIN / pattern / password /
+    // biometric) must be confirmed before any order is created, so a stray
+    // tap or someone holding the phone cannot spend. A device with no lock
+    // set skips the prompt (there is nothing to verify against).
+    private var pendingVerifiedAction: (() -> Unit)? = null
+    private val confirmPurchase = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val action = pendingVerifiedAction
+        pendingVerifiedAction = null
+        if (result.resultCode == RESULT_OK) {
+            action?.invoke()
+        } else {
+            setStatus("Purchase cancelled — verification was not completed.")
+        }
+    }
+
+    private fun verifyPurchase(action: () -> Unit) {
+        val km = getSystemService(KeyguardManager::class.java)
+        if (km == null || !km.isDeviceSecure) {
+            action()
+            return
+        }
+        val intent = km.createConfirmDeviceCredentialIntent(
+            "Confirm your purchase",
+            "Verify it's you before paying"
+        )
+        if (intent == null) {
+            action()
+            return
+        }
+        pendingVerifiedAction = action
+        confirmPurchase.launch(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -386,36 +423,74 @@ class DetailActivity : AppCompatActivity() {
             promptConnect()
             return
         }
-        val presets = intArrayOf(10, 25, 50, 100)
-        val labels = presets.map { "⭐ $it Stars" }.toTypedArray()
+        val dev = a.developer.ifEmpty { a.name }
         AlertDialog.Builder(this)
-            .setTitle("Support ${a.developer.ifEmpty { a.name }}")
-            .setItems(labels) { _, which ->
-                setStatus("Creating your support order…")
-                thread {
-                    val created = try {
-                        Pay.createOrder(
-                            this, "support", a.pkg, null, "stars",
-                            amountStars = presets[which]
-                        )
-                    } catch (e: Exception) {
-                        null
-                    }
-                    runOnUiThread {
-                        if (created == null) {
-                            setStatus("Could not create the order. Try again.")
-                        } else {
-                            setStatus(
-                                "Invoice sent to @mboxstoreappbot in Telegram " +
-                                    "— pay there to complete your support."
-                            )
-                            watchOrder(created.order.id)
+            .setTitle("Support $dev")
+            .setItems(arrayOf("Telegram Stars", "USDT (TON)")) { _, railIdx ->
+                if (railIdx == 0) {
+                    val presets = intArrayOf(10, 25, 50, 100)
+                    val labels = presets.map { "⭐ $it Stars" }.toTypedArray()
+                    AlertDialog.Builder(this)
+                        .setTitle("Support $dev — Stars")
+                        .setItems(labels) { _, which ->
+                            createSupportOrder(a, "stars", presets[which], 0.0)
                         }
-                    }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                } else {
+                    val presets = doubleArrayOf(0.5, 1.0, 2.5, 5.0)
+                    val labels = presets.map { "₮ ${trimNum(it)} USDT" }.toTypedArray()
+                    AlertDialog.Builder(this)
+                        .setTitle("Support $dev — USDT")
+                        .setItems(labels) { _, which ->
+                            createSupportOrder(a, "usdt", 0, presets[which])
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
                 }
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun createSupportOrder(a: StoreApp, rail: String, stars: Int, usdt: Double) {
+        verifyPurchase {
+            setStatus("Creating your support order…")
+            thread {
+                val created = try {
+                    Pay.createOrder(
+                        this, "support", a.pkg, null, rail,
+                        amountStars = stars, amountUsdt = usdt
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+                runOnUiThread {
+                    if (created == null) {
+                        setStatus("Could not create the order. Try again.")
+                    } else if (rail == "usdt") {
+                        startActivity(
+                            Intent(this, UsdtPayActivity::class.java)
+                                .putExtra(UsdtPayActivity.EXTRA_ORDER, created.order.id)
+                                .putExtra(UsdtPayActivity.EXTRA_ADDRESS, created.address)
+                                .putExtra(UsdtPayActivity.EXTRA_MEMO, created.order.memo)
+                                .putExtra(UsdtPayActivity.EXTRA_AMOUNT, created.order.amountUsdt)
+                                .putExtra(
+                                    UsdtPayActivity.EXTRA_LABEL,
+                                    "Support ${a.developer.ifEmpty { a.name }}"
+                                )
+                        )
+                        watchOrder(created.order.id)
+                    } else {
+                        setStatus(
+                            "Invoice sent to @mboxstoreappbot in Telegram " +
+                                "— pay there to complete your support."
+                        )
+                        watchOrder(created.order.id)
+                    }
+                }
+            }
+        }
     }
 
     private fun showRailSheet(
@@ -451,6 +526,16 @@ class DetailActivity : AppCompatActivity() {
     }
 
     private fun createOrder(
+        kind: String,
+        item: String,
+        productId: String?,
+        rail: String,
+        label: String
+    ) {
+        verifyPurchase { createOrderVerified(kind, item, productId, rail, label) }
+    }
+
+    private fun createOrderVerified(
         kind: String,
         item: String,
         productId: String?,
