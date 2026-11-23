@@ -1,6 +1,7 @@
 package com.mbox.store
 
 import android.os.Bundle
+import android.text.SpannableStringBuilder
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -61,7 +62,8 @@ class PayHistoryActivity : AppCompatActivity() {
         t.setTextColor(getColor(R.color.text_primary))
         texts.addView(t)
         val s = TextView(this)
-        s.text = fmt.format(Date(o.created)) + " · " + amountText(o)
+        s.text = SpannableStringBuilder(fmt.format(Date(o.created)))
+            .append(" · ").append(amountText(o))
         s.textSize = 12.5f
         s.setTextColor(getColor(R.color.text_secondary))
         texts.addView(s)
@@ -83,9 +85,9 @@ class PayHistoryActivity : AppCompatActivity() {
         return row
     }
 
-    private fun amountText(o: Pay.Order): String = when (o.rail) {
+    private fun amountText(o: Pay.Order): CharSequence = when (o.rail) {
         "usdt" -> "₮ " + trimNum(o.amountUsdt) + " USDT"
-        else -> "⭐ ${o.amountStars}"
+        else -> Ui.starText(this, o.amountStars.toString(), 13)
     }
 
     private fun trimNum(v: Double): String =
