@@ -88,10 +88,21 @@ object Account {
         }
     }
 
-    /** GET /connect/me?token= — null when the link no longer exists. */
-    fun fetchMe(context: Context): User? {
+    /** Outcome of asking the server who a stored link token belongs to. */
+    sealed class Me {
+        data class Linked(val user: User) : Me()
+        object Gone : Me()     // server answered 404: the link is really over
+        object Unknown : Me()  // network/server error: no verdict either way
+    }
+
+    /**
+     * GET /connect/me?token= — only an explicit 404 means the link no
+     * longer exists. A failed request (offline, timeout, 5xx) must never
+     * be read as a revoked link.
+     */
+    fun fetchMe(context: Context): Me {
         val t = token(context)
-        if (t.isEmpty()) return null
+        if (t.isEmpty()) return Me.Unknown
         return try {
             val j = request("GET", "/connect/me?token=" +
                 URLEncoder.encode(t, "UTF-8"), null)
@@ -99,10 +110,22 @@ object Account {
             prefs(context).edit()
                 .putBoolean("alerts", j.optBoolean("alerts", true))
                 .apply()
-            u
+            Me.Linked(u)
+        } catch (e: HttpStatusException) {
+            if (e.code == 404) Me.Gone else Me.Unknown
         } catch (e: Exception) {
-            null
+            Me.Unknown
         }
+    }
+
+    /** Refresh the cached profile of the existing link (token untouched). */
+    fun saveUser(context: Context, user: User) {
+        prefs(context).edit()
+            .putLong("tg_id", user.id)
+            .putString("name", user.name)
+            .putString("username", user.username)
+            .putString("avatar", user.avatarUrl)
+            .apply()
     }
 
     fun unlink(context: Context) {
@@ -154,10 +177,12 @@ object Account {
         val code = conn.responseCode
         val stream = if (code in 200..299) conn.inputStream else conn.errorStream
         val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
-        if (code !in 200..299) throw IllegalStateException("HTTP $code")
+        if (code !in 200..299) throw HttpStatusException(code)
         return JSONObject(text)
     }
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    class HttpStatusException(val code: Int) : Exception("HTTP $code")
 }
