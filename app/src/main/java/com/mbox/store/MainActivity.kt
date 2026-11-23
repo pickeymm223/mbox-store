@@ -229,11 +229,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun load() {
-        binding.progress.visibility = View.VISIBLE
         binding.errorBox.visibility = View.GONE
+        // Show the on-device copy immediately when there is one; the
+        // network refresh below replaces it when it lands. The error
+        // screen is only for a first launch with no copy and no network.
+        val cached = if (Catalog.apps.isEmpty()) Catalog.loadCache(this) else null
+        if (cached != null) {
+            allApps = cached
+            onCatalogReady()
+        } else {
+            binding.progress.visibility = View.VISIBLE
+        }
         thread {
             try {
-                val apps = Catalog.fetch()
+                val apps = Catalog.fetch(this)
                 runOnUiThread {
                     binding.progress.visibility = View.GONE
                     allApps = apps
@@ -242,9 +251,11 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 runOnUiThread {
                     binding.progress.visibility = View.GONE
-                    binding.errorBox.visibility = View.VISIBLE
-                    binding.errorText.text =
-                        "Could not load the catalog.\nCheck your connection and try again."
+                    if (allApps.isEmpty()) {
+                        binding.errorBox.visibility = View.VISIBLE
+                        binding.errorText.text =
+                            "Could not load the catalog.\nCheck your connection and try again."
+                    }
                 }
             }
         }
