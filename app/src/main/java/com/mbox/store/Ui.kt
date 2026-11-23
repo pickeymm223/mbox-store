@@ -3,6 +3,10 @@ package com.mbox.store
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.style.ImageSpan
+import androidx.core.content.ContextCompat
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -19,6 +23,21 @@ object Ui {
 
     fun dp(context: Context, v: Int): Int =
         (v * context.resources.displayMetrics.density).toInt()
+
+    /**
+     * A label prefixed with the Telegram Stars icon — the drawn vector
+     * (R.drawable.ic_telegram_star), never the ⭐ emoji, which renders as
+     * a different star on every phone brand.
+     */
+    fun starText(context: Context, label: String, iconDp: Int = 16): CharSequence {
+        val d = ContextCompat.getDrawable(context, R.drawable.ic_telegram_star)
+            ?: return label
+        val size = dp(context, iconDp)
+        d.setBounds(0, 0, size, size)
+        val s = SpannableString("\uFFFC $label")
+        s.setSpan(ImageSpan(d, ImageSpan.ALIGN_BOTTOM), 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return s
+    }
 
     fun cardBg(context: Context, radiusDp: Int = 20): GradientDrawable {
         val g = GradientDrawable()
@@ -71,7 +90,7 @@ object Ui {
         iconRes: Int,
         iconColor: String,
         title: String,
-        sub: String? = null,
+        sub: CharSequence? = null,
         badge: String? = null,
         chevron: Boolean = true,
         onClick: (() -> Unit)? = null
@@ -103,7 +122,7 @@ object Ui {
         iconRes: Int,
         iconColor: String,
         title: String,
-        sub: String? = null,
+        sub: CharSequence? = null,
         checked: Boolean,
         enabled: Boolean = true,
         onChange: (Boolean) -> Unit
@@ -125,7 +144,7 @@ object Ui {
         iconRes: Int,
         iconColor: String,
         title: String,
-        sub: String?,
+        sub: CharSequence?,
         endBuilder: (LinearLayout) -> Unit
     ): View {
         val root = LinearLayout(context)
