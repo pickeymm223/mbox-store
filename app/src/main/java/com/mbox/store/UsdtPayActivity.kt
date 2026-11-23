@@ -1,8 +1,11 @@
 package com.mbox.store
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -26,6 +29,9 @@ class UsdtPayActivity : AppCompatActivity() {
         const val EXTRA_MEMO = "memo"
         const val EXTRA_AMOUNT = "amount"
         const val EXTRA_LABEL = "label"
+
+        // Official USDT jetton master on TON.
+        const val USDT_MASTER = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs"
     }
 
     private lateinit var binding: ActivityUsdtPayBinding
@@ -57,6 +63,41 @@ class UsdtPayActivity : AppCompatActivity() {
         binding.usdtBack.setOnClickListener { finish() }
         binding.copyAddress.setOnClickListener { copy("Address", address) }
         binding.copyMemo.setOnClickListener { copy("Memo", memo) }
+        binding.payInWallet.setOnClickListener { openWallet(address, memo, amount) }
+    }
+
+    /**
+     * Hand the payment to the user's TON wallet with everything filled
+     * in — recipient, USDT amount and the order memo — via the standard
+     * transfer link every TON wallet understands. The wallet still asks
+     * the user to confirm there (wallets never sign on their own); when
+     * they come back, this screen's polling sees the transfer arrive.
+     */
+    private fun openWallet(address: String, memo: String, amount: Double) {
+        if (address.isEmpty() || amount <= 0) return
+        val units = java.math.BigDecimal.valueOf(amount)
+            .movePointRight(6).toBigInteger().toString()
+        val params = "jetton=$USDT_MASTER&amount=$units&text=${Uri.encode(memo)}"
+        val tonLink = Intent(Intent.ACTION_VIEW, Uri.parse("ton://transfer/$address?$params"))
+        try {
+            startActivity(tonLink)
+            return
+        } catch (e: ActivityNotFoundException) {
+            // No wallet registered for the ton:// scheme — fall through.
+        }
+        val webLink = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://app.tonkeeper.com/transfer/$address?$params")
+        )
+        try {
+            startActivity(webLink)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(
+                this,
+                "No wallet app found — copy the address and memo below instead.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     override fun onResume() {
@@ -88,6 +129,7 @@ class UsdtPayActivity : AppCompatActivity() {
         paid = true
         polling = false
         handler.removeCallbacks(tick)
+        binding.payInWallet.visibility = View.GONE
         binding.usdtSpinner.visibility = View.GONE
         binding.usdtStatusTitle.text = "Payment received"
         binding.usdtStatusSub.text =
