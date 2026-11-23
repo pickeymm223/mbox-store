@@ -461,8 +461,8 @@ class MainActivity : AppCompatActivity() {
                 this, R.drawable.ic_row_star, "#FFC94D",
                 "Support sent",
                 sub = when {
-                    sStars > 0 && sUsdt > 0 -> "⭐ $sStars · ₮ ${trimNum(sUsdt)}"
-                    sStars > 0 -> "⭐ $sStars sent to developers"
+                    sStars > 0 && sUsdt > 0 -> Ui.starText(this, "$sStars · ₮ ${trimNum(sUsdt)}", 13)
+                    sStars > 0 -> Ui.starText(this, "$sStars sent to developers", 13)
                     sUsdt > 0 -> "₮ ${trimNum(sUsdt)} sent to developers"
                     else -> "Support developers you like"
                 }
