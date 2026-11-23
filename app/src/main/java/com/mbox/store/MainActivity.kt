@@ -443,6 +443,14 @@ class MainActivity : AppCompatActivity() {
         val payGroup = Ui.group(
             this,
             Ui.row(
+                this, R.drawable.ic_row_card, "#B388FF",
+                "USDT balance",
+                sub = when {
+                    !linked -> "Connect Telegram to top up"
+                    else -> "₮ ${trimNum(PayCache.balanceUsdt(this))} — tap to top up"
+                }
+            ) { startActivity(Intent(this, BalanceActivity::class.java)) },
+            Ui.row(
                 this, R.drawable.ic_row_card, "#2EC4B6",
                 "Purchases",
                 sub = when {
