@@ -134,15 +134,45 @@ class MainActivity : AppCompatActivity() {
         }
 
         // If we hold a link token, confirm it is still valid server-side;
-        // a link revoked elsewhere should not linger on this device.
+        // a link revoked elsewhere should not linger on this device. Only
+        // an explicit server 404 ends the link — a network failure on a
+        // flaky connection must not sign the user out.
+        refreshHeaderAvatar()
         if (Account.isLinked(this)) {
             thread {
-                val me = Account.fetchMe(this)
-                if (me == null) {
-                    Account.clear(this)
-                    runOnUiThread { refreshProfile() }
+                when (val me = Account.fetchMe(this)) {
+                    is Account.Me.Linked -> {
+                        Account.saveUser(this, me.user)
+                        runOnUiThread { refreshProfile(); refreshHeaderAvatar() }
+                    }
+                    Account.Me.Gone -> {
+                        Account.clear(this)
+                        runOnUiThread { refreshProfile(); refreshHeaderAvatar() }
+                    }
+                    Account.Me.Unknown -> Unit
                 }
             }
+        }
+    }
+
+    /** Home header chip: Telegram photo when linked, initial otherwise. */
+    private fun refreshHeaderAvatar() {
+        binding.headerAvatar.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+        binding.headerAvatar.clipToOutline = true
+        val user = Account.user(this)
+        if (user != null && user.avatarUrl.isNotEmpty()) {
+            binding.headerLetter.visibility = View.GONE
+            binding.headerAvatar.visibility = View.VISIBLE
+            IconLoader.load(user.avatarUrl, binding.headerAvatar)
+        } else {
+            binding.headerAvatar.visibility = View.GONE
+            binding.headerLetter.visibility = View.VISIBLE
+            binding.headerLetter.text =
+                (user?.name?.firstOrNull() ?: 'M').uppercaseChar().toString()
         }
     }
 
@@ -171,6 +201,7 @@ class MainActivity : AppCompatActivity() {
             refreshUpdates()
             refreshProfile()
             refreshBanner()
+            refreshHeaderAvatar()
         }
         // Keep purchase state fresh in the background.
         if (Account.isLinked(this)) {
