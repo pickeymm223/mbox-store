@@ -2,6 +2,7 @@ package com.mbox.store
 
 import android.content.Intent
 import android.os.Bundle
+import android.text.SpannableStringBuilder
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -92,15 +93,16 @@ class PurchasesActivity : AppCompatActivity() {
             binding.supportBox.addView(appRow(
                 iconUrl = app?.iconUrl ?: "",
                 title = o.label,
-                sub = fmt.format(Date(if (o.paidAt > 0) o.paidAt else o.created)) +
-                    " · " + amountText(o),
+                sub = SpannableStringBuilder(
+                    fmt.format(Date(if (o.paidAt > 0) o.paidAt else o.created))
+                ).append(" · ").append(amountText(o)),
                 chip = null
             ) { })
         }
     }
 
-    private fun amountText(o: Pay.Order): String = when {
-        o.amountStars > 0 -> "⭐ ${o.amountStars}"
+    private fun amountText(o: Pay.Order): CharSequence = when {
+        o.amountStars > 0 -> Ui.starText(this, o.amountStars.toString(), 13)
         o.amountUsdt > 0 -> "₮ " + trimNum(o.amountUsdt)
         else -> ""
     }
@@ -112,7 +114,7 @@ class PurchasesActivity : AppCompatActivity() {
     private fun appRow(
         iconUrl: String,
         title: String,
-        sub: String,
+        sub: CharSequence,
         chip: String?,
         onClick: () -> Unit
     ): View {
