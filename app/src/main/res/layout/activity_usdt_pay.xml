@@ -57,12 +57,29 @@
         android:textColor="@color/text_secondary"
         android:textSize="13sp" />
 
+    <Button
+        android:id="@+id/payInWallet"
+        style="@style/Widget.MBOXStore.ActionButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="Pay in wallet" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center"
+        android:text="Opens your TON wallet with the address, amount and memo already filled in — you just confirm there."
+        android:textColor="@color/text_secondary"
+        android:textSize="12.5sp" />
+
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="26dp"
         android:letterSpacing="0.08"
-        android:text="SEND TO"
+        android:text="OR SEND MANUALLY"
         android:textColor="@color/accent"
         android:textSize="13sp"
         android:textStyle="bold" />
