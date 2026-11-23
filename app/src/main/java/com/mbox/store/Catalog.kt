@@ -1,6 +1,8 @@
 package com.mbox.store
 
+import android.content.Context
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -49,8 +51,10 @@ object Catalog {
 
     fun find(pkg: String): StoreApp? = apps.firstOrNull { it.pkg == pkg }
 
+    private const val CACHE_FILE = "catalog_cache.json"
+
     /** Blocking fetch — call from a background thread. */
-    fun fetch(): List<StoreApp> {
+    fun fetch(context: Context? = null): List<StoreApp> {
         val conn = URL(CATALOG_URL).openConnection() as HttpURLConnection
         conn.connectTimeout = 15000
         conn.readTimeout = 20000
@@ -59,7 +63,32 @@ object Catalog {
         val text = conn.inputStream.bufferedReader().use { it.readText() }
         val parsed = parse(text)
         apps = parsed
+        if (context != null && parsed.isNotEmpty()) saveCache(context, text)
         return parsed
+    }
+
+    /** Keep the raw catalog on the phone so Home works offline too. */
+    private fun saveCache(context: Context, text: String) {
+        try {
+            File(context.filesDir, CACHE_FILE).writeText(text)
+        } catch (e: Exception) {
+            // Cache is best-effort; a failed write changes nothing.
+        }
+    }
+
+    /** The on-device copy from the last successful fetch, if any. */
+    fun loadCache(context: Context): List<StoreApp>? {
+        return try {
+            val f = File(context.filesDir, CACHE_FILE)
+            if (!f.exists()) return null
+            val parsed = parse(f.readText())
+            if (parsed.isEmpty()) null else {
+                apps = parsed
+                parsed
+            }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun parse(text: String): List<StoreApp> {
