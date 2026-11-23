@@ -86,7 +86,7 @@ class PayHistoryActivity : AppCompatActivity() {
     }
 
     private fun amountText(o: Pay.Order): CharSequence = when (o.rail) {
-        "usdt" -> "₮ " + trimNum(o.amountUsdt) + " USDT"
+        "usdt", "balance" -> "₮ " + trimNum(o.amountUsdt) + " USDT"
         else -> Ui.starText(this, o.amountStars.toString(), 13)
     }
 
