@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.widget.Toast
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -49,6 +51,7 @@ class DetailActivity : AppCompatActivity() {
 
     // MBOX Pay: watch a created order until Telegram / the chain settles it.
     private var balanceUsdt: Double = 0.0
+    private var balanceStars: Int = 0
     private var orderPolling = false
     private var watchedOrderId: String? = null
     private val orderTick = object : Runnable {
@@ -140,6 +143,7 @@ class DetailActivity : AppCompatActivity() {
         binding.cancel.setOnClickListener { onCancel() }
         binding.supportBtn.setOnClickListener { app?.let { onSupport(it) } }
         balanceUsdt = PayCache.balanceUsdt(this)
+        balanceStars = PayCache.balanceStars(this)
         refreshState()
         renderPay()
     }
@@ -147,6 +151,9 @@ class DetailActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (!verifying) syncDownloadUi()
+        // Coming back from Telegram / a wallet: resume watching any
+        // order that is still settling so the page unlocks by itself.
+        if (watchedOrderId != null && !orderPolling) watchOrder(watchedOrderId!!)
         val a = app
         if (a != null && (a.isPaid || a.support || a.iap.isNotEmpty()) &&
             Account.isLinked(this)
@@ -155,7 +162,10 @@ class DetailActivity : AppCompatActivity() {
                 PayCache.refresh(this)
                 val bal = try { Pay.balance(this) } catch (e: Exception) { null }
                 runOnUiThread {
-                    if (bal != null) balanceUsdt = bal.usdt
+                    if (bal != null) {
+                        balanceUsdt = bal.usdt
+                        balanceStars = bal.stars
+                    }
                     refreshState()
                     renderPay()
                 }
@@ -437,29 +447,16 @@ class DetailActivity : AppCompatActivity() {
         val dev = a.developer.ifEmpty { a.name }
         val railLabels = ArrayList<CharSequence>()
         val railKeys = ArrayList<String>()
+        if (balanceUsdt > 0 || balanceStars > 0) {
+            railLabels.add("MBOX Balance"); railKeys.add("balance")
+        }
         railLabels.add("Telegram Stars"); railKeys.add("stars")
         railLabels.add("USDT (TON)"); railKeys.add("usdt")
-        if (balanceUsdt > 0) {
-            railLabels.add("MBOX Balance — ₮ ${trimNum(balanceUsdt)}")
-            railKeys.add("balance")
-        }
         AlertDialog.Builder(this)
             .setTitle("Support $dev")
             .setItems(railLabels.toTypedArray()) { _, railIdx ->
                 if (railKeys[railIdx] == "balance") {
-                    val presets = doubleArrayOf(0.5, 1.0, 2.5, 5.0)
-                        .filter { it <= balanceUsdt }
-                    val labels = ArrayList<CharSequence>()
-                    for (p in presets) labels.add("₮ ${trimNum(p)} USDT")
-                    labels.add("Custom amount…")
-                    AlertDialog.Builder(this)
-                        .setTitle("Support $dev — Balance")
-                        .setItems(labels.toTypedArray()) { _, which ->
-                            if (which == presets.size) promptCustomSupport(a, "balance")
-                            else createSupportOrder(a, "balance", 0, presets[which])
-                        }
-                        .setNegativeButton("Cancel", null)
-                        .show()
+                    showSupportBalance(a, dev)
                 } else if (railKeys[railIdx] == "stars") {
                     val presets = intArrayOf(10, 25, 50, 100)
                     val labels = ArrayList<CharSequence>()
@@ -492,14 +489,77 @@ class DetailActivity : AppCompatActivity() {
             .show()
     }
 
+    /** Support from the pre-funded balance: pick the currency (when
+     *  both are funded), then a preset or a custom amount. Spending
+     *  the balance never leaves the app. */
+    private fun showSupportBalance(a: StoreApp, dev: String) {
+        if (balanceUsdt > 0 && balanceStars > 0) {
+            val labels = arrayOf<CharSequence>(
+                "USDT — ₮ ${trimNum(balanceUsdt)}",
+                Ui.starText(this, "Stars — $balanceStars", 18)
+            )
+            AlertDialog.Builder(this)
+                .setTitle("Support $dev — Balance")
+                .setItems(labels) { _, which ->
+                    if (which == 0) showSupportBalanceUsdt(a, dev)
+                    else showSupportBalanceStars(a, dev)
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else if (balanceUsdt > 0) {
+            showSupportBalanceUsdt(a, dev)
+        } else {
+            showSupportBalanceStars(a, dev)
+        }
+    }
+
+    private fun showSupportBalanceUsdt(a: StoreApp, dev: String) {
+        val presets = doubleArrayOf(0.5, 1.0, 2.5, 5.0)
+            .filter { it <= balanceUsdt }
+        val labels = ArrayList<CharSequence>()
+        for (p in presets) labels.add("₮ ${trimNum(p)} USDT")
+        labels.add("Custom amount…")
+        AlertDialog.Builder(this)
+            .setTitle("Support $dev — Balance (USDT)")
+            .setItems(labels.toTypedArray()) { _, which ->
+                if (which == presets.size) promptCustomSupport(a, "balance")
+                else createSupportOrder(a, "balance", 0, presets[which])
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showSupportBalanceStars(a: StoreApp, dev: String) {
+        val presets = intArrayOf(10, 25, 50, 100)
+            .filter { it <= balanceStars }
+        val labels = ArrayList<CharSequence>()
+        for (p in presets) labels.add(Ui.starText(this, "$p Stars", 18))
+        labels.add("Custom amount…")
+        AlertDialog.Builder(this)
+            .setTitle("Support $dev — Balance (Stars)")
+            .setItems(labels.toTypedArray()) { _, which ->
+                if (which == presets.size) promptCustomSupport(a, "balance-stars")
+                else createSupportOrder(a, "balance-stars", presets[which], 0.0)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun createSupportOrder(a: StoreApp, rail: String, stars: Int, usdt: Double) {
         verifyPurchase {
             setStatus("Creating your support order…")
+            val serverRail = if (rail == "balance-stars") "balance" else rail
+            val balCurrency = when (rail) {
+                "balance-stars" -> "stars"
+                "balance" -> "usdt"
+                else -> null
+            }
             thread {
                 val created = try {
                     Pay.createOrder(
-                        this, "support", a.pkg, null, rail,
-                        amountStars = stars, amountUsdt = usdt
+                        this, "support", a.pkg, null, serverRail,
+                        amountStars = stars, amountUsdt = usdt,
+                        balanceCurrency = balCurrency
                     )
                 } catch (e: Exception) {
                     null
@@ -507,8 +567,12 @@ class DetailActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (created == null) {
                         setStatus("Could not create the order. Try again.")
-                    } else if (rail == "balance") {
-                        balanceUsdt = (balanceUsdt - usdt).coerceAtLeast(0.0)
+                    } else if (serverRail == "balance") {
+                        if (rail == "balance-stars") {
+                            balanceStars = (balanceStars - stars).coerceAtLeast(0)
+                        } else {
+                            balanceUsdt = (balanceUsdt - usdt).coerceAtLeast(0.0)
+                        }
                         setStatus(
                             "Paid from your MBOX balance — thank you for your support!"
                         )
@@ -527,10 +591,17 @@ class DetailActivity : AppCompatActivity() {
                         )
                         watchOrder(created.order.id)
                     } else {
-                        setStatus(
-                            "Invoice sent to @mboxstoreappbot in Telegram " +
-                                "— pay there to complete your support."
-                        )
+                        if (created.invoiceLink.isNotEmpty()) {
+                            setStatus(
+                                "Opening Telegram to finish your Stars payment…"
+                            )
+                            openInvoiceLink(created.invoiceLink)
+                        } else {
+                            setStatus(
+                                "Invoice sent to @mboxstoreappbot in Telegram " +
+                                    "— pay there to complete your support."
+                            )
+                        }
                         watchOrder(created.order.id)
                     }
                 }
@@ -540,11 +611,12 @@ class DetailActivity : AppCompatActivity() {
 
     private fun promptCustomSupport(a: StoreApp, rail: String) {
         val input = EditText(this)
-        input.inputType = if (rail == "stars")
+        input.inputType = if (rail == "stars" || rail == "balance-stars")
             InputType.TYPE_CLASS_NUMBER
         else
             InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        input.hint = if (rail == "stars") "Amount in Stars (min 1)" else "Amount in USDT (min 0.1)"
+        input.hint = if (rail == "stars" || rail == "balance-stars")
+            "Amount in Stars (min 1)" else "Amount in USDT (min 0.1)"
         val wrap = FrameLayout(this)
         val lp = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -558,12 +630,17 @@ class DetailActivity : AppCompatActivity() {
             .setView(wrap)
             .setPositiveButton("Continue") { _, _ ->
                 val raw = input.text.toString().trim()
-                if (rail == "stars") {
+                if (rail == "stars" || rail == "balance-stars") {
                     val v = raw.toIntOrNull()
                     if (v == null || v < 1) {
                         setStatus("Enter a valid Stars amount (min 1).")
+                    } else if (rail == "balance-stars" && v > balanceStars) {
+                        setStatus(
+                            "That is more than your Stars balance " +
+                                "($balanceStars). Top up in Profile first."
+                        )
                     } else {
-                        createSupportOrder(a, "stars", v, 0.0)
+                        createSupportOrder(a, rail, v, 0.0)
                     }
                 } else {
                     val v = raw.toDoubleOrNull()
@@ -593,6 +670,10 @@ class DetailActivity : AppCompatActivity() {
     ) {
         val options = ArrayList<CharSequence>()
         val rails = ArrayList<String>()
+        if (stars > 0 && balanceStars >= stars) {
+            options.add(Ui.starText(this, "MBOX Balance — $balanceStars Stars", 18))
+            rails.add("balance-stars")
+        }
         if (usdt > 0 && balanceUsdt >= usdt) {
             options.add("MBOX Balance — ₮ ${trimNum(balanceUsdt)}")
             rails.add("balance")
@@ -637,9 +718,18 @@ class DetailActivity : AppCompatActivity() {
         label: String
     ) {
         setStatus("Creating your order…")
+        val serverRail = if (rail == "balance-stars") "balance" else rail
+        val balCurrency = when (rail) {
+            "balance-stars" -> "stars"
+            "balance" -> "usdt"
+            else -> null
+        }
         thread {
             val created = try {
-                Pay.createOrder(this, kind, item, productId, rail)
+                Pay.createOrder(
+                    this, kind, item, productId, serverRail,
+                    balanceCurrency = balCurrency
+                )
             } catch (e: Exception) {
                 null
             }
@@ -651,7 +741,7 @@ class DetailActivity : AppCompatActivity() {
                     )
                     return@runOnUiThread
                 }
-                if (rail == "balance") {
+                if (serverRail == "balance") {
                     setStatus(
                         "Paid from your MBOX balance — thank you! " +
                             "Your purchase is unlocked."
@@ -660,7 +750,10 @@ class DetailActivity : AppCompatActivity() {
                         PayCache.refresh(this)
                         val bal = try { Pay.balance(this) } catch (e: Exception) { null }
                         runOnUiThread {
-                            if (bal != null) balanceUsdt = bal.usdt
+                            if (bal != null) {
+                                balanceUsdt = bal.usdt
+                                balanceStars = bal.stars
+                            }
                             refreshState()
                             renderPay()
                         }
@@ -676,17 +769,43 @@ class DetailActivity : AppCompatActivity() {
                     )
                     watchOrder(created.order.id)
                 } else {
-                    setStatus(
-                        if (created.invoiceSent)
+                    // Stars direct: one tap on the invoice link lands on
+                    // Telegram's payment sheet; coming back here, the
+                    // order watch unlocks the page by itself.
+                    if (created.invoiceLink.isNotEmpty()) {
+                        setStatus(
+                            "Opening Telegram to finish your Stars payment — " +
+                                "come back here and this page unlocks by itself."
+                        )
+                        openInvoiceLink(created.invoiceLink)
+                    } else if (created.invoiceSent) {
+                        setStatus(
                             "Invoice sent to @mboxstoreappbot in Telegram — " +
                                 "pay there and this page unlocks by itself."
-                        else
+                        )
+                    } else {
+                        setStatus(
                             "Order created — open @mboxstoreappbot in " +
                                 "Telegram to pay."
-                    )
+                        )
+                    }
                     watchOrder(created.order.id)
                 }
             }
+        }
+    }
+
+    /** Open a Telegram invoice link (t.me/$…) — Telegram shows its
+     *  payment sheet directly, no bot-chat hunting. */
+    private fun openInvoiceLink(link: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Could not open Telegram — open @mboxstoreappbot to pay.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
