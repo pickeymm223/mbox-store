@@ -418,24 +418,13 @@ class MainActivity : AppCompatActivity() {
             box.addView(connectCard())
         }
 
-        val manage = Ui.row(
-            this, R.drawable.ic_row_plane, "#2AABEE",
-            "Manage your Telegram connection",
-            sub = if (linked) "Connected" else "Not connected"
-        ) { onManageConnection() }
-        val manageGroup = LinearLayout(this)
-        manageGroup.orientation = LinearLayout.VERTICAL
-        manageGroup.background = Ui.cardBg(this)
-        val mgLp = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        mgLp.topMargin = Ui.dp(this, 12)
-        manageGroup.layoutParams = mgLp
-        manageGroup.addView(manage)
-        box.addView(manageGroup)
+        // (No separate "Manage your Telegram connection" row — it duplicated
+        // the account/connect card above and both opened the same dialog.
+        // One connection surface only: the card.)
 
-        // ---- MBOX Pay ----
+        // ---- MBOX Pay (shown only when a Telegram account is connected;
+        // every pay surface is keyed to the linked Telegram identity) ----
+        if (linked) {
         box.addView(Ui.sectionLabel(this, "MBOX PAY"))
         val ownedCount = PayCache.ownedApps(this).size
         val sStars = PayCache.supportStars(this)
@@ -477,6 +466,7 @@ class MainActivity : AppCompatActivity() {
             ) { startActivity(Intent(this, PurchasesActivity::class.java)) }
         )
         box.addView(payGroup)
+        }
 
         val updates = if (allApps.isEmpty()) emptyList() else updatesAvailable()
         val group1 = Ui.group(
@@ -578,7 +568,8 @@ class MainActivity : AppCompatActivity() {
         name.setTypeface(name.typeface, android.graphics.Typeface.BOLD)
         texts.addView(name)
         val sub = TextView(this)
-        sub.text = "Connected with Telegram"
+        sub.text = if (user != null && user.id != 0L) "Telegram ID: ${user.id}"
+            else "Connected with Telegram"
         sub.textSize = 13.5f
         sub.setTextColor(Color.parseColor("#2AABEE"))
         val sLp = LinearLayout.LayoutParams(
@@ -767,8 +758,8 @@ class MainActivity : AppCompatActivity() {
                     "the server. Purchases stay recorded to your Telegram " +
                     "account."
             )
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Disconnect") { _, _ ->
+            .setPositiveButton("Keep connected", null)
+            .setNegativeButton("Disconnect") { _, _ ->
                 thread {
                     Account.unlink(this)
                     runOnUiThread {
