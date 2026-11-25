@@ -16,7 +16,8 @@ import java.util.Locale
 import kotlin.concurrent.thread
 
 /**
- * Pre-funded USDT balance: shows the balance, the shared deposit address
+ * Pre-funded USDT balance: shows the balance, the deposit name
+ * (mboxstoreapp.ton — the raw address is never displayed, only copied)
  * and the account's own deposit memo. While this screen is open it polls
  * the balance endpoint, which is also what makes the server credit fresh
  * deposits — so a deposit appears here on its own.
@@ -69,7 +70,6 @@ class BalanceActivity : AppCompatActivity() {
             runOnUiThread {
                 address = bal.address
                 memo = bal.depositMemo
-                binding.balAddress.text = bal.address
                 binding.balMemo.text = bal.depositMemo
                 if (shownUsdt >= 0 && bal.usdt > shownUsdt) {
                     binding.balStatus.text =
