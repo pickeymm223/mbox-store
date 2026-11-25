@@ -58,7 +58,6 @@ class UsdtPayActivity : AppCompatActivity() {
         val amount = intent.getDoubleExtra(EXTRA_AMOUNT, 0.0)
         binding.usdtApp.text = intent.getStringExtra(EXTRA_LABEL).orEmpty()
         binding.usdtAmount.text = "₮ " + trimNum(amount) + " USDT"
-        binding.usdtAddress.text = address
         binding.usdtMemo.text = memo
         binding.usdtBack.setOnClickListener { finish() }
         binding.copyAddress.setOnClickListener { copy("Address", address) }
