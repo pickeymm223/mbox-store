@@ -433,10 +433,11 @@ class MainActivity : AppCompatActivity() {
             this,
             Ui.row(
                 this, R.drawable.ic_row_card, "#B388FF",
-                "USDT balance",
+                "Balance",
                 sub = when {
                     !linked -> "Connect Telegram to top up"
-                    else -> "₮ ${trimNum(PayCache.balanceUsdt(this))} — tap to top up"
+                    else -> "₮ ${trimNum(PayCache.balanceUsdt(this))} · " +
+                        "${PayCache.balanceStars(this)} Stars — tap to top up"
                 }
             ) { startActivity(Intent(this, BalanceActivity::class.java)) },
             Ui.row(
