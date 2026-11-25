@@ -31,7 +31,8 @@ object Pay {
     data class Created(
         val order: Order,
         val address: String,
-        val invoiceSent: Boolean
+        val invoiceSent: Boolean,
+        val invoiceLink: String
     )
 
     fun parseOrder(o: JSONObject): Order = Order(
@@ -57,7 +58,8 @@ object Pay {
         productId: String?,
         rail: String,
         amountStars: Int = 0,
-        amountUsdt: Double = 0.0
+        amountUsdt: Double = 0.0,
+        balanceCurrency: String? = null
     ): Created {
         val body = JSONObject()
             .put("linkToken", Account.token(context))
@@ -65,6 +67,7 @@ object Pay {
             .put("item", item)
             .put("rail", rail)
         if (productId != null) body.put("productId", productId)
+        if (balanceCurrency != null) body.put("balanceCurrency", balanceCurrency)
         if (kind == "support") {
             body.put("amountStars", amountStars)
             body.put("amountUsdt", amountUsdt)
@@ -73,7 +76,8 @@ object Pay {
         return Created(
             order = parseOrder(j.getJSONObject("order")),
             address = j.optString("address"),
-            invoiceSent = j.optBoolean("invoiceSent", false)
+            invoiceSent = j.optBoolean("invoiceSent", false),
+            invoiceLink = j.optString("invoiceLink")
         )
     }
 
@@ -90,7 +94,12 @@ object Pay {
         return parseOrder(j.getJSONObject("order"))
     }
 
-    data class Balance(val usdt: Double, val depositMemo: String, val address: String)
+    data class Balance(
+        val usdt: Double,
+        val stars: Int,
+        val depositMemo: String,
+        val address: String
+    )
 
     /** GET /pay/balance — the read also makes the server credit any
      *  fresh deposits carrying this account's deposit memo. */
@@ -103,9 +112,26 @@ object Pay {
         )
         return Balance(
             usdt = j.optDouble("balanceUsdt", 0.0),
+            stars = j.optInt("balanceStars", 0),
             depositMemo = j.optString("depositMemo"),
             address = j.optString("address")
         )
+    }
+
+    /** POST /pay/topup/stars — returns a Telegram invoice link; paying
+     *  it credits the in-app Stars balance (settled by the bot webhook). */
+    fun topUpStars(context: Context, amountStars: Int): String {
+        val j = request(
+            "POST", "/pay/topup/stars",
+            JSONObject()
+                .put("linkToken", Account.token(context))
+                .put("amountStars", amountStars)
+        )
+        val link = j.optString("invoiceLink")
+        if (!j.optBoolean("ok", false) || link.isEmpty()) {
+            throw IllegalStateException("top-up link failed")
+        }
+        return link
     }
 
     /** GET /pay/entitlements — item keys this account owns. */
@@ -195,6 +221,9 @@ object PayCache {
     fun balanceUsdt(context: Context): Double =
         prefs(context).getString("balance_usdt", "0")?.toDoubleOrNull() ?: 0.0
 
+    fun balanceStars(context: Context): Int =
+        prefs(context).getInt("balance_stars", 0)
+
     fun payoutAddress(context: Context): String =
         prefs(context).getString("payout_address", "").orEmpty()
 
@@ -229,6 +258,7 @@ object PayCache {
                 val bal = Pay.balance(context)
                 prefs(context).edit()
                     .putString("balance_usdt", bal.usdt.toString())
+                    .putInt("balance_stars", bal.stars)
                     .apply()
             } catch (e: Exception) {
                 // Balance cache stays stale; the next refresh retries.
