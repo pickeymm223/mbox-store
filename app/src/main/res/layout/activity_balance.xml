@@ -28,7 +28,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="USDT Balance"
+                android:text="Balance"
                 android:textColor="@color/text_primary"
                 android:textSize="20sp"
                 android:textStyle="bold" />
@@ -54,6 +54,45 @@
             android:text="Top up once, then pay inside the app instantly — no wallet round-trip for every purchase."
             android:textColor="@color/text_secondary"
             android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="26dp"
+            android:letterSpacing="0.08"
+            android:text="STARS BALANCE"
+            android:textColor="@color/accent"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/balStarsAmount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:text="0 Stars"
+            android:textColor="@color/text_primary"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/balTopupStars"
+            style="@style/Widget.MBOXStore.ActionButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Top up Stars" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="26dp"
+            android:letterSpacing="0.08"
+            android:text="USDT BALANCE — TOP UP"
+            android:textColor="@color/accent"
+            android:textSize="13sp"
+            android:textStyle="bold" />
 
         <Button
             android:id="@+id/balTopupWallet"
@@ -160,7 +199,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:text="Send USDT on the TON network only, minimum 0.1 USDT. Deposits are credited automatically — usually within a minute of opening this screen. Balance is for purchases inside MBOX Store (apps, in-app purchases and support)."
+            android:text="Send USDT on the TON network only, minimum 0.1 USDT. Deposits are credited automatically — usually within a minute of opening this screen. Stars top-ups are paid in Telegram once; after that, spending either balance happens entirely inside the app. Balance is spend-only inside MBOX Store (apps, in-app purchases and support)."
             android:textColor="@color/text_secondary"
             android:textSize="12.5sp" />
     </LinearLayout>
