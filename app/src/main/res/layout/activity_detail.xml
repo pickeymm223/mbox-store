@@ -75,6 +75,14 @@
             android:text="Install" />
 
         <Button
+            android:id="@+id/shareBtn"
+            style="@style/Widget.MBOXStore.SecondaryButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Share" />
+
+        <Button
             android:id="@+id/supportBtn"
             style="@style/Widget.MBOXStore.SecondaryButton"
             android:layout_width="match_parent"
