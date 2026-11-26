@@ -142,6 +142,7 @@ class DetailActivity : AppCompatActivity() {
         binding.action.setOnClickListener { onAction() }
         binding.cancel.setOnClickListener { onCancel() }
         binding.supportBtn.setOnClickListener { app?.let { onSupport(it) } }
+        binding.shareBtn.setOnClickListener { app?.let { shareApp(it) } }
         balanceUsdt = PayCache.balanceUsdt(this)
         balanceStars = PayCache.balanceStars(this)
         refreshState()
@@ -437,6 +438,18 @@ class DetailActivity : AppCompatActivity() {
             return
         }
         showRailSheet("app", a.pkg, null, a.priceStars, a.priceUsdt, a.name)
+    }
+
+    /** Play-Store-style share: this app's MBOX Store link — opens in
+     *  the store app when installed, on the web otherwise. */
+    private fun shareApp(a: StoreApp) {
+        val url = "https://mbox-store-api.zawminhtet723.workers.dev/app/" + a.pkg
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, a.name)
+            putExtra(Intent.EXTRA_TEXT, "${a.name} — MBOX Store\n$url")
+        }
+        startActivity(Intent.createChooser(send, "Share ${a.name}"))
     }
 
     private fun onSupport(a: StoreApp) {
