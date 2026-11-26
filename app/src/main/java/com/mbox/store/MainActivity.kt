@@ -54,6 +54,9 @@ class MainActivity : AppCompatActivity() {
     private var connectAttempts = 0
     private val connectHandler = Handler(Looper.getMainLooper())
 
+    // App Link waiting for the catalog: https://…/app/<package>.
+    private var pendingPkg: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -125,6 +128,7 @@ class MainActivity : AppCompatActivity() {
             binding.bottomNav.selectedItemId = R.id.nav_profile
             showSection(R.id.nav_profile)
         }
+        handleDeepLink(intent)
 
         if (Catalog.apps.isNotEmpty()) {
             allApps = Catalog.apps
@@ -178,10 +182,35 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         if (intent.getStringExtra(EXTRA_TAB) == "profile") {
             binding.bottomNav.selectedItemId = R.id.nav_profile
             showSection(R.id.nav_profile)
         }
+        handleDeepLink(intent)
+        openPending()
+    }
+
+    /** Remember an App Link target; the detail opens once the catalog
+     *  is ready (a cold start may still be fetching it). */
+    private fun handleDeepLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "https") return
+        if (data.host != "mbox-store-api.zawminhtet723.workers.dev") return
+        val seg = data.pathSegments
+        if (seg.size == 2 && seg[0] == "app" && seg[1].isNotEmpty()) {
+            pendingPkg = seg[1]
+        }
+    }
+
+    private fun openPending() {
+        val pkg = pendingPkg ?: return
+        val app = Catalog.find(pkg) ?: return
+        pendingPkg = null
+        startActivity(
+            Intent(this, DetailActivity::class.java)
+                .putExtra(DetailActivity.EXTRA_PKG, app.pkg)
+        )
     }
 
     override fun onDestroy() {
@@ -268,6 +297,7 @@ class MainActivity : AppCompatActivity() {
         refreshUpdates()
         refreshProfile()
         applySearch()
+        openPending()
     }
 
     // ---- Home sections ----
